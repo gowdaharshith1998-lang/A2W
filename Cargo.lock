@@ -163,6 +163,7 @@ dependencies = [
  "a2w-ir",
  "a2w-nodes",
  "aes-gcm",
+ "async-trait",
  "base64",
  "serde",
  "serde_json",

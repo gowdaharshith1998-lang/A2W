@@ -438,6 +438,7 @@ mod tests {
             kind: NodeKind::CodeStep,
             params,
             mode,
+            credentials: None,
         }
     }
 

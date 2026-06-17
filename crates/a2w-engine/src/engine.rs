@@ -28,7 +28,7 @@ use thiserror::Error;
 
 use crate::event::{EventLog, StepEvent, StepKind};
 use crate::item::{Item, ItemSource};
-use crate::node::{ExecutionMode, NodeContext, NodeExecutor};
+use crate::node::{CredentialResolver, ExecutionMode, NodeContext, NodeExecutor};
 
 /// Maps a [`NodeKind`] to the executor that implements its behaviour.
 ///
@@ -114,9 +114,11 @@ pub enum EngineError {
 /// Global monotonic counter used to mint dependency-light run ids.
 static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// The execution engine. Holds the registry of node behaviours.
+/// The execution engine. Holds the registry of node behaviours and an optional
+/// run-time credential resolver.
 pub struct Engine {
     registry: NodeRegistry,
+    credentials: Option<Arc<dyn CredentialResolver>>,
 }
 
 /// Outcome of executing a single node, used internally by the scheduler.
@@ -131,7 +133,19 @@ impl Engine {
     /// Construct an engine over a node registry.
     #[must_use]
     pub fn new(registry: NodeRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            credentials: None,
+        }
+    }
+
+    /// Attach a run-time credential resolver (vault-backed) so nodes can resolve
+    /// `credential_ref`s at execution time without plaintext secrets ever
+    /// appearing in the workflow IR or persisted run records.
+    #[must_use]
+    pub fn with_credentials(mut self, resolver: Arc<dyn CredentialResolver>) -> Self {
+        self.credentials = Some(resolver);
+        self
     }
 
     /// Run `wf` to completion.
@@ -349,6 +363,7 @@ impl Engine {
             kind: node.kind,
             params: node.params.clone(),
             mode,
+            credentials: self.credentials.clone(),
         };
 
         // Started event.

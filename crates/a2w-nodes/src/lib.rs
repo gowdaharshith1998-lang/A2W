@@ -24,8 +24,11 @@ mod transform;
 mod webhook_trigger;
 
 pub use code_step::{CodeError, CodeStep, ExtismRunner, WasmRunner};
-pub use http_request::HttpRequest;
-pub use mcp_tool_call::{McpError, McpInvoker, McpServerSpec, McpToolCall, RmcpInvoker};
+pub use http_request::{check_url_allowed, ip_is_blocked, EgressPolicy, HttpRequest};
+pub use mcp_tool_call::{
+    check_mcp_command_allowed, check_mcp_command_allowed_with_list, McpError, McpInvoker,
+    McpServerSpec, McpToolCall, RmcpInvoker,
+};
 pub use merge::Merge;
 pub use schedule_trigger::ScheduleTrigger;
 pub use transform::Transform;

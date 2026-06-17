@@ -23,6 +23,7 @@
 
 #![forbid(unsafe_code)]
 
+mod resolver;
 mod vault;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,6 +34,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use thiserror::Error;
 
+pub use resolver::StoreCredentialResolver;
 pub use vault::Vault;
 
 /// Errors returned by the store and vault.

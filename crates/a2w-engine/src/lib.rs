@@ -24,4 +24,6 @@ mod node;
 pub use engine::{Engine, EngineError, NodeRegistry, RunResult, RunStatus};
 pub use event::{EventLog, MemoryEventLog, StepEvent, StepKind};
 pub use item::{Item, ItemSource};
-pub use node::{ExecutionMode, NodeContext, NodeError, NodeExecutor};
+pub use node::{
+    CredentialError, CredentialResolver, ExecutionMode, NodeContext, NodeError, NodeExecutor,
+};

@@ -1,6 +1,9 @@
 //! The node-executor abstraction: the trait every node kind implements, plus the
 //! per-execution context and error type.
 
+use std::fmt;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -22,7 +25,7 @@ pub enum ExecutionMode {
 ///
 /// A node's *behaviour* is keyed by [`NodeKind`] (one executor per kind in the
 /// registry); its *configuration* arrives per-node here via `params`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NodeContext {
     /// The id of the current run.
     pub run_id: String,
@@ -34,6 +37,43 @@ pub struct NodeContext {
     pub params: serde_json::Value,
     /// Whether this is a real run or a dry run.
     pub mode: ExecutionMode,
+    /// Optional run-time credential resolver (vault-backed). Nodes resolve
+    /// `credential_ref`s through this so plaintext secrets never live in the IR
+    /// or in persisted run records. `None` in dry runs and tests.
+    pub credentials: Option<Arc<dyn CredentialResolver>>,
+}
+
+impl NodeContext {
+    /// Resolve a `credential_ref` to its secret value via the configured
+    /// resolver. Returns `Ok(None)` when no resolver is configured or no such
+    /// credential exists — the caller decides whether that is an error.
+    ///
+    /// # Errors
+    /// Propagates a [`CredentialError`] if the resolver's lookup fails.
+    pub async fn resolve_credential(
+        &self,
+        credential_ref: &str,
+    ) -> Result<Option<String>, CredentialError> {
+        match &self.credentials {
+            Some(resolver) => resolver.resolve(credential_ref).await,
+            None => Ok(None),
+        }
+    }
+}
+
+impl fmt::Debug for NodeContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The credential resolver is deliberately not printed (it is opaque and
+        // may guard secrets); show only whether one is present.
+        f.debug_struct("NodeContext")
+            .field("run_id", &self.run_id)
+            .field("node_id", &self.node_id)
+            .field("kind", &self.kind)
+            .field("params", &self.params)
+            .field("mode", &self.mode)
+            .field("credentials", &self.credentials.as_ref().map(|_| "<resolver>"))
+            .finish()
+    }
 }
 
 /// Errors a node executor can return.
@@ -51,6 +91,29 @@ pub enum NodeError {
     /// A generic runtime failure during execution.
     #[error("runtime error: {0}")]
     Runtime(String),
+}
+
+/// Resolves a workflow's `credential_ref`s to their secret values at run time,
+/// so plaintext secrets never appear in the workflow IR or persisted runs.
+///
+/// In production this is backed by the encrypted credential vault. It is absent
+/// (`None` on [`NodeContext`]) during dry runs and unit tests.
+#[async_trait]
+pub trait CredentialResolver: Send + Sync {
+    /// Resolve a credential reference to its secret value, or `Ok(None)` if no
+    /// credential is registered under that reference.
+    ///
+    /// # Errors
+    /// Returns [`CredentialError`] if the underlying lookup or decryption fails.
+    async fn resolve(&self, credential_ref: &str) -> Result<Option<String>, CredentialError>;
+}
+
+/// An error from a [`CredentialResolver`] lookup.
+#[derive(Debug, Error)]
+pub enum CredentialError {
+    /// The credential store/vault lookup or decryption failed.
+    #[error("credential resolution failed: {0}")]
+    Lookup(String),
 }
 
 /// A unit of executable behaviour for one [`NodeKind`].

@@ -124,6 +124,65 @@ pub trait McpInvoker: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
+// MCP stdio command allowlist.
+// ---------------------------------------------------------------------------
+
+/// Check `command` against a parsed allowlist string (comma-separated).
+///
+/// This is the pure inner logic, separated from env-var reading so it can be
+/// unit-tested without mutating the process environment.
+///
+/// # Fail-closed policy
+/// If `allowlist_raw` is empty (representing an unset or empty env var), ALL
+/// commands are rejected.
+///
+/// # Errors
+/// Returns [`McpError::BadSpec`] when the command is not allowed.
+pub fn check_mcp_command_allowed_with_list(
+    command: &str,
+    allowlist_raw: &str,
+) -> Result<(), McpError> {
+    let allowed: Vec<&str> = allowlist_raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if allowed.is_empty() {
+        return Err(McpError::BadSpec(format!(
+            "stdio MCP spawn of '{command}' rejected: A2W_MCP_ALLOWED_COMMANDS is not set. \
+             Set it to a comma-separated list of permitted commands, e.g. \
+             A2W_MCP_ALLOWED_COMMANDS=a2w-mcp,my-mcp-server"
+        )));
+    }
+
+    if allowed.contains(&command) {
+        Ok(())
+    } else {
+        Err(McpError::BadSpec(format!(
+            "stdio MCP spawn of '{command}' rejected: not in the allowlist \
+             (A2W_MCP_ALLOWED_COMMANDS={allowlist_raw})"
+        )))
+    }
+}
+
+/// Check that `command` appears in the `A2W_MCP_ALLOWED_COMMANDS` allowlist.
+///
+/// Reads `A2W_MCP_ALLOWED_COMMANDS` from the environment at call time and
+/// delegates to [`check_mcp_command_allowed_with_list`].
+///
+/// # Fail-closed policy
+/// If the env var is **unset or empty**, ALL stdio MCP spawns are rejected.
+/// The operator must explicitly opt in by naming each permitted command.
+///
+/// # Errors
+/// Returns [`McpError::BadSpec`] when the command is not allowed.
+pub fn check_mcp_command_allowed(command: &str) -> Result<(), McpError> {
+    let raw = std::env::var("A2W_MCP_ALLOWED_COMMANDS").unwrap_or_default();
+    check_mcp_command_allowed_with_list(command, &raw)
+}
+
+// ---------------------------------------------------------------------------
 // Real implementation over the official rmcp client.
 // ---------------------------------------------------------------------------
 
@@ -168,10 +227,21 @@ impl McpInvoker for RmcpInvoker {
             }
         };
 
+        // Security: check `command` against the process-wide allowlist before
+        // spawning. The allowlist is read from A2W_MCP_ALLOWED_COMMANDS (a
+        // comma-separated list). When the env var is UNSET or EMPTY we fail
+        // closed: no stdio MCP commands may spawn without an explicit allowlist.
+        check_mcp_command_allowed(command)?;
+
         // Build the child command. stderr is inherited (the server logs there);
         // stdin/stdout are wired to the MCP transport by `TokioChildProcess`.
+        //
+        // Security: env_clear() strips the parent environment so the child
+        // cannot read A2W_MASTER_KEY, ANTHROPIC_API_KEY, or other host secrets.
+        // Only the explicit `env` entries from the workflow spec are forwarded.
         let mut cmd = tokio::process::Command::new(command);
         cmd.args(args);
+        cmd.env_clear();
         for (k, v) in env {
             cmd.env(k, v);
         }
@@ -410,6 +480,7 @@ mod tests {
             kind: NodeKind::McpToolCall,
             params,
             mode,
+            credentials: None,
         }
     }
 
@@ -578,5 +649,51 @@ mod tests {
         );
         let err = node.dry_run(&ctx, vec![]).await.expect_err("missing tool");
         assert!(matches!(err, NodeError::BadParams(_)), "got {err:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Command allowlist tests (pure — no env mutation needed).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn allowlist_unset_fails_closed() {
+        // Empty string simulates an unset / empty A2W_MCP_ALLOWED_COMMANDS.
+        let err = check_mcp_command_allowed_with_list("sh", "")
+            .expect_err("must reject when allowlist is empty");
+        assert!(matches!(err, McpError::BadSpec(_)), "got {err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("A2W_MCP_ALLOWED_COMMANDS"),
+            "error should name the env var; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn allowlist_command_not_listed_is_rejected() {
+        let err = check_mcp_command_allowed_with_list("sh", "a2w-mcp,my-server")
+            .expect_err("sh not in allowlist");
+        assert!(matches!(err, McpError::BadSpec(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn allowlist_command_listed_is_allowed() {
+        check_mcp_command_allowed_with_list("a2w-mcp", "a2w-mcp,my-server")
+            .expect("a2w-mcp is in the allowlist");
+        check_mcp_command_allowed_with_list("my-server", "a2w-mcp,my-server")
+            .expect("my-server is in the allowlist");
+    }
+
+    #[test]
+    fn allowlist_whitespace_trimmed() {
+        check_mcp_command_allowed_with_list("a2w-mcp", " a2w-mcp , my-server ")
+            .expect("whitespace around entries must be trimmed");
+    }
+
+    #[test]
+    fn allowlist_case_sensitive() {
+        // The match is case-sensitive; "SH" != "sh".
+        let err = check_mcp_command_allowed_with_list("SH", "sh,a2w-mcp")
+            .expect_err("case mismatch must be rejected");
+        assert!(matches!(err, McpError::BadSpec(_)), "got {err:?}");
     }
 }
