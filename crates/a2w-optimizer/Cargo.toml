@@ -1,0 +1,17 @@
+[package]
+name = "a2w-optimizer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A2W run profiler and structural optimizer: critical-path profiling and parallelize/dead-node suggestions."
+
+[dependencies]
+a2w-ir = { workspace = true }
+a2w-engine = { workspace = true }
+petgraph = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+a2w-nodes = { path = "../a2w-nodes" }
+tokio = { workspace = true }

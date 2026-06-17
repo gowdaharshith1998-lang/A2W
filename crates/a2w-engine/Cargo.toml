@@ -1,0 +1,20 @@
+[package]
+name = "a2w-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A2W execution engine: runs a workflow IR as a concurrent async DAG with guaranteed item lineage."
+
+[dependencies]
+a2w-ir = { workspace = true }
+a2w-validator = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+petgraph = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

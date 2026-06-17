@@ -1,0 +1,11 @@
+[package]
+name = "a2w-openapi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Generate A2W integration manifests (actions + HTTP bindings + JSON-Schema) from OpenAPI specs."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
