@@ -1,0 +1,17 @@
+[package]
+name = "a2w-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A2W workflow Intermediate Representation: a narrow, versioned, declarative JSON IR."
+
+[features]
+# `samples` is a no-op marker feature; `sample_workflow()` is always public.
+# Kept so downstream crates can opt into a future sample corpus without churn.
+samples = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }

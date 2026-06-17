@@ -1,0 +1,29 @@
+[package]
+name = "a2w-nodes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A2W core node executors: WebhookTrigger, HttpRequest, Transform, McpToolCall, CodeStep."
+
+[dependencies]
+a2w-ir = { workspace = true }
+a2w-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+# Official MCP client SDK. `client` enables the client service role; the
+# `transport-child-process` feature provides `TokioChildProcess` for spawning a
+# stdio MCP server as a child process. These features are additive with the
+# `server`/`transport-io` features the workspace already enables elsewhere.
+rmcp = { workspace = true, features = ["client", "transport-child-process"] }
+# WASM sandbox for the code_step node (extism host SDK, bundles wasmtime).
+extism = { workspace = true }
+# base64 decoding for the code_step node's inline `{ "base64": "..." }` wasm source.
+base64 = { workspace = true }
+
+[dev-dependencies]
+a2w-validator = { workspace = true }
+tokio = { workspace = true }

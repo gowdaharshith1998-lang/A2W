@@ -1,0 +1,20 @@
+[package]
+name = "a2w-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A2W read-only REST + observability HTTP server (axum) over a2w-store and the engine."
+
+[dependencies]
+a2w-ir = { workspace = true }
+a2w-engine = { workspace = true }
+a2w-nodes = { workspace = true }
+a2w-validator = { workspace = true }
+a2w-store = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

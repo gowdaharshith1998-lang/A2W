@@ -1,0 +1,15 @@
+[package]
+name = "a2w-import"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Best-effort importer: n8n workflow JSON -> A2W IR."
+
+[dependencies]
+a2w-ir = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+a2w-validator = { workspace = true }

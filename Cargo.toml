@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/a2w-ir",
+    "crates/a2w-validator",
+    "crates/a2w-engine",
+    "crates/a2w-nodes",
+    "crates/a2w-testkit",
+    "crates/a2w-optimizer",
+    "crates/a2w-acceptance",
+    "crates/a2w-mcp",
+    "crates/a2w-templates",
+    "crates/a2w-llm",
+    "crates/a2w-author",
+    "crates/a2w-store",
+    "crates/a2w-import",
+    "crates/a2w-openapi",
+    "crates/a2w-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "0.8"
+petgraph = "0.6"
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+async-trait = "0.1"
+futures = "0.3"
+# MCP server SDK (official modelcontextprotocol/rust-sdk). `server` already pulls
+# in schemars 1.x; `transport-io` provides the stdio transport; `macros` provides
+# the #[tool]/#[tool_router]/#[tool_handler] attribute macros. `schemars` is
+# listed explicitly so `rmcp::schemars` is guaranteed available for tool-input
+# JsonSchema derives.
+rmcp = { version = "1.7", features = ["server", "macros", "transport-io", "schemars"] }
+# Persistence (M4): sqlx with bundled SQLite using RUNTIME queries (no compile-time
+# DB / DATABASE_URL needed); AES-256-GCM for the credential vault; base64 encoding.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+aes-gcm = "0.10"
+base64 = "0.22"
+# M5 WASM code step: the extism host SDK (bundles a wasmtime runtime).
+extism = "1"
+# M7 HTTP server: axum (read-only REST + observability over a2w-store).
+axum = "0.8"
+
+# Internal crates referenced by path so members can use `.workspace = true`.
+a2w-ir = { path = "crates/a2w-ir" }
+a2w-validator = { path = "crates/a2w-validator" }
+a2w-engine = { path = "crates/a2w-engine" }
+a2w-nodes = { path = "crates/a2w-nodes" }
+a2w-testkit = { path = "crates/a2w-testkit" }
+a2w-optimizer = { path = "crates/a2w-optimizer" }
+a2w-templates = { path = "crates/a2w-templates" }
+a2w-llm = { path = "crates/a2w-llm" }
+a2w-author = { path = "crates/a2w-author" }
+a2w-store = { path = "crates/a2w-store" }
+a2w-import = { path = "crates/a2w-import" }
+a2w-openapi = { path = "crates/a2w-openapi" }
+a2w-server = { path = "crates/a2w-server" }

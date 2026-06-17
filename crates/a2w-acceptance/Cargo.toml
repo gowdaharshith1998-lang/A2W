@@ -1,0 +1,20 @@
+[package]
+name = "a2w-acceptance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "End-to-end vertical-slice acceptance tests proving the full A2W agent loop composes."
+
+# This crate exists only to host cross-crate integration tests; it has no
+# library code of its own (so it can dev-depend on every crate without creating
+# a normal-dependency cycle).
+
+[dev-dependencies]
+a2w-ir = { path = "../a2w-ir" }
+a2w-validator = { path = "../a2w-validator" }
+a2w-engine = { path = "../a2w-engine" }
+a2w-nodes = { path = "../a2w-nodes" }
+a2w-testkit = { path = "../a2w-testkit" }
+a2w-optimizer = { path = "../a2w-optimizer" }
+serde_json = { workspace = true }
+tokio = { workspace = true }
