@@ -166,6 +166,98 @@ pub fn check_mcp_command_allowed_with_list(
     }
 }
 
+/// Env keys an MCP child must not be allowed to receive: dynamic-loader
+/// overrides, interpreter-hijack variables, TLS-trust overrides, and basic
+/// process-environment knobs (PATH/HOME) that would let workflow-supplied env
+/// turn an allowlisted command into an arbitrary code loader or CA-trust
+/// bypass. Match is case-insensitive — macOS DYLD_* are case-sensitive but
+/// the safer default is to reject any case variant.
+///
+/// Audit-2 expansion: added JVM (JAVA_TOOL_OPTIONS et al.), Python (PYTHONHOME,
+/// PYTHONBREAKPOINT, PYTHONINSPECT), Node (NODE_PATH), glibc loader-adjacent
+/// (GCONV_PATH, LOCPATH, NLSPATH, RESOLV_HOST_CONF, HOSTALIASES), TLS trust
+/// (SSL_CERT_FILE, SSL_CERT_DIR, CURL_CA_BUNDLE, REQUESTS_CA_BUNDLE,
+/// GIT_SSL_CAINFO), GTK/Qt plugin paths, shell sidecars, and the basic
+/// PATH/HOME/XDG keys.
+///
+/// Also rejects any key starting with `BASH_FUNC_` (function-export
+/// shellshock pattern) or `DYLD_` (any macOS dyld variant).
+fn is_dangerous_env_key(k: &str) -> bool {
+    const DANGEROUS: &[&str] = &[
+        // Dynamic loader (Linux).
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "LD_AUDIT",
+        "LD_BIND_NOW",
+        "LD_DEBUG",
+        "LD_PROFILE",
+        // Dynamic loader (macOS) — additional DYLD_* caught by prefix below.
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "DYLD_FORCE_FLAT_NAMESPACE",
+        // glibc loader-adjacent.
+        "GCONV_PATH",
+        "LOCPATH",
+        "NLSPATH",
+        "RESOLV_HOST_CONF",
+        "HOSTALIASES",
+        "GLIBC_TUNABLES",
+        "MALLOC_CHECK_",
+        // Python.
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONBREAKPOINT",
+        "PYTHONINSPECT",
+        "PYTHONSTARTUP",
+        "PYTHONIOENCODING",
+        // Node.
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        // Perl / Ruby.
+        "PERL5LIB",
+        "PERL5OPT",
+        "RUBYLIB",
+        "RUBYOPT",
+        // JVM.
+        "JAVA_TOOL_OPTIONS",
+        "_JAVA_OPTIONS",
+        "JDK_JAVA_OPTIONS",
+        "CLASSPATH",
+        "ANT_OPTS",
+        // Shell sidecars.
+        "BASH_ENV",
+        "ENV",
+        "PROMPT_COMMAND",
+        "SHELLOPTS",
+        "ZDOTDIR",
+        // Process basics — letting a workflow override PATH means the child
+        // can re-exec to attacker-controlled binaries on any sub-exec.
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        // GUI plugin paths (any allowlisted command that loads GTK/Qt
+        // becomes a plugin loader otherwise).
+        "GTK_PATH",
+        "QT_PLUGIN_PATH",
+        "GIO_EXTRA_MODULES",
+        // TLS trust — overriding any of these lets a workflow MITM the
+        // child's outbound TLS.
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "CURL_CA_BUNDLE",
+        "REQUESTS_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "NODE_EXTRA_CA_CERTS",
+    ];
+    if DANGEROUS.iter().any(|d| d.eq_ignore_ascii_case(k)) {
+        return true;
+    }
+    // Catch-all prefixes for variant-rich families.
+    let upper = k.to_ascii_uppercase();
+    upper.starts_with("DYLD_") || upper.starts_with("BASH_FUNC_") || upper.starts_with("XDG_")
+}
+
 /// Check that `command` appears in the `A2W_MCP_ALLOWED_COMMANDS` allowlist.
 ///
 /// Reads `A2W_MCP_ALLOWED_COMMANDS` from the environment at call time and
@@ -239,10 +331,21 @@ impl McpInvoker for RmcpInvoker {
         // Security: env_clear() strips the parent environment so the child
         // cannot read A2W_MASTER_KEY, ANTHROPIC_API_KEY, or other host secrets.
         // Only the explicit `env` entries from the workflow spec are forwarded.
+        //
+        // Audit-fix: refuse to forward env keys that influence dynamic loader
+        // behaviour. A workflow that sets LD_PRELOAD or DYLD_INSERT_LIBRARIES
+        // could turn any allowlisted command into a shellcode loader; an
+        // attacker who could write workflows shouldn't get that capability.
         let mut cmd = tokio::process::Command::new(command);
         cmd.args(args);
         cmd.env_clear();
         for (k, v) in env {
+            if is_dangerous_env_key(k) {
+                return Err(McpError::BadSpec(format!(
+                    "env key '{k}' is rejected: dynamic-loader / library-injection \
+                     variables are not permitted in MCP spawn env"
+                )));
+            }
             cmd.env(k, v);
         }
 
@@ -392,9 +495,19 @@ impl NodeExecutor for McpToolCall {
         let tool = Self::tool(&ctx.params)?.to_string();
         let arguments = Self::arguments(&ctx.params);
 
-        // Produce one output item per input item. With no input, still emit one
-        // item so a tool call with no upstream data is observable.
-        let count = input.len().max(1);
+        // Produce one output item per input item. Audit-2 fix (CRITICAL —
+        // unselected-branch side effect): when input is empty AND the node
+        // has any incoming connection, we MUST NOT fire the tool — the empty
+        // input means a port-routing producer routed elsewhere. The previous
+        // `.max(1)` semantics (always fire once) reintroduced side effects on
+        // the unselected branch arm. A trigger-rooted MCP node (no incoming)
+        // still gets one synthetic call via the engine seeding it with a
+        // single trigger item, so observability of "tool called with no data"
+        // is preserved at the trigger layer.
+        if input.is_empty() {
+            return Ok(Vec::new());
+        }
+        let count = input.len();
         let mut out = Vec::with_capacity(count);
         for _ in 0..count {
             let result = self
@@ -426,7 +539,12 @@ impl NodeExecutor for McpToolCall {
             }
         };
 
-        let count = input.len().max(1);
+        // Symmetry with `execute`: no input → no mock items, so unselected
+        // branch arms produce zero events in dry-run too.
+        if input.is_empty() {
+            return Ok(Vec::new());
+        }
+        let count = input.len();
         let mut out = Vec::with_capacity(count);
         for _ in 0..count {
             out.push(Item::produced(
@@ -481,6 +599,10 @@ mod tests {
             params,
             mode,
             credentials: None,
+        sub_workflows: None,
+        sub_workflow_depth: 0,
+        workflow_id: None,
+        approvals: None,
         }
     }
 
@@ -558,7 +680,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_with_no_input_still_emits_one_item() {
+    async fn execute_with_no_input_emits_zero_items_audit2() {
+        // Audit-2: empty input → no tool calls. This was previously
+        // `.max(1)` which would silently fire the tool on the unselected
+        // branch arm of a Branch/Switch.
         let node = McpToolCall::new(Arc::new(MockInvoker::default()));
         let ctx = ctx(
             serde_json::json!({
@@ -568,9 +693,7 @@ mod tests {
             ExecutionMode::Run,
         );
         let out = node.execute(&ctx, vec![]).await.expect("execute ok");
-        assert_eq!(out.len(), 1);
-        // Missing `arguments` defaults to an empty object.
-        assert_eq!(out[0].json["result"]["echoed_args"], serde_json::json!({}));
+        assert!(out.is_empty(), "no input → no side-effect, no items");
     }
 
     #[tokio::test]

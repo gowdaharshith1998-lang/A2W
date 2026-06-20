@@ -727,3 +727,108 @@ async fn code_step_live_count_vowels_via_extism_runner() {
         "expected vowel count 3 for 'hello world'; got {value}"
     );
 }
+
+// --- Port-routed end-to-end: Branch routes items to true/false sinks --------
+
+#[tokio::test]
+async fn branch_routes_items_via_ports_end_to_end() {
+    // Workflow:
+    //   trigger -> br (Branch on /is_alert)
+    //     br[0] -> hot  (Transform tagging items as hot)
+    //     br[1] -> cold (Transform tagging items as cold)
+    //
+    // Trigger seeds 3 items; two alerts and one non-alert. The engine should
+    // route 2 items to `hot` and 1 to `cold`, with no cross-contamination.
+    let mut br = Node::new("br", NodeKind::Branch);
+    br.params = serde_json::json!({ "condition": "/is_alert" });
+
+    let nodes = vec![
+        Node::new("trigger", NodeKind::WebhookTrigger),
+        br,
+        transform_set("hot", serde_json::json!({ "label": "hot" })),
+        transform_set("cold", serde_json::json!({ "label": "cold" })),
+    ];
+    let connections = vec![
+        Connection::new("trigger", 0, "br"),
+        Connection::new("br", 0, "hot"),
+        Connection::new("br", 1, "cold"),
+    ];
+    let w = wf(nodes, connections);
+
+    let engine = Engine::new(default_registry());
+    let log = MemoryEventLog::new();
+    let r = engine
+        .run(
+            &w,
+            vec![
+                serde_json::json!({ "id": 1, "is_alert": true }),
+                serde_json::json!({ "id": 2, "is_alert": false }),
+                serde_json::json!({ "id": 3, "is_alert": true }),
+            ],
+            ExecutionMode::Run,
+            &log,
+        )
+        .await
+        .expect("branch wf runs");
+    assert_eq!(r.status, RunStatus::Completed);
+
+    let hot = r.node_outputs.get("hot").expect("hot outputs");
+    let cold = r.node_outputs.get("cold").expect("cold outputs");
+    assert_eq!(hot.len(), 2, "two alerts routed to hot: {hot:?}");
+    assert_eq!(cold.len(), 1, "one non-alert routed to cold: {cold:?}");
+    // Hot items carry the `hot` label (the Transform output merges that in).
+    for item in hot {
+        assert_eq!(item.json["label"], serde_json::json!("hot"));
+    }
+    for item in cold {
+        assert_eq!(item.json["label"], serde_json::json!("cold"));
+    }
+}
+
+#[tokio::test]
+async fn switch_multi_way_routing_end_to_end() {
+    let mut sw = Node::new("sw", NodeKind::Switch);
+    sw.params = serde_json::json!({
+        "key": "/severity",
+        "cases": [
+            { "value": "critical", "port": 0 },
+            { "value": "warning",  "port": 1 }
+        ],
+        "default_port": 2
+    });
+
+    let nodes = vec![
+        Node::new("trigger", NodeKind::WebhookTrigger),
+        sw,
+        transform_set("crit", serde_json::json!({ "tier": "crit" })),
+        transform_set("warn", serde_json::json!({ "tier": "warn" })),
+        transform_set("info", serde_json::json!({ "tier": "info" })),
+    ];
+    let connections = vec![
+        Connection::new("trigger", 0, "sw"),
+        Connection::new("sw", 0, "crit"),
+        Connection::new("sw", 1, "warn"),
+        Connection::new("sw", 2, "info"),
+    ];
+    let w = wf(nodes, connections);
+
+    let engine = Engine::new(default_registry());
+    let log = MemoryEventLog::new();
+    let r = engine
+        .run(
+            &w,
+            vec![
+                serde_json::json!({ "severity": "critical" }),
+                serde_json::json!({ "severity": "warning" }),
+                serde_json::json!({ "severity": "ok" }),
+            ],
+            ExecutionMode::Run,
+            &log,
+        )
+        .await
+        .expect("switch wf runs");
+    assert_eq!(r.status, RunStatus::Completed);
+    assert_eq!(r.node_outputs["crit"].len(), 1);
+    assert_eq!(r.node_outputs["warn"].len(), 1);
+    assert_eq!(r.node_outputs["info"].len(), 1);
+}

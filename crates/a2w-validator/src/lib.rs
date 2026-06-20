@@ -25,6 +25,37 @@ mod report;
 
 pub use report::{Finding, FindingCode, Location, Severity, ValidationReport};
 
+/// All workflow ids reachable from `wf` via `SubWorkflow.workflow_id` params
+/// (one hop only — for cross-workflow cycle detection the caller traverses
+/// the resulting set transitively). Returns the set in declaration order.
+#[must_use]
+pub fn sub_workflow_references(wf: &Workflow) -> Vec<String> {
+    let mut refs: Vec<String> = Vec::new();
+    for n in &wf.nodes {
+        if n.kind != a2w_ir::NodeKind::SubWorkflow {
+            continue;
+        }
+        if let Some(id) = n.params.get("workflow_id").and_then(|v| v.as_str()) {
+            if !refs.iter().any(|r| r == id) {
+                refs.push(id.to_string());
+            }
+        }
+        // Inline `workflow` form: also report any sub_workflow references
+        // it contains (so the inline workflow's cycle risks are visible to
+        // the cross-workflow walker).
+        if let Some(inline) = n.params.get("workflow") {
+            if let Ok(sub_wf) = serde_json::from_value::<Workflow>(inline.clone()) {
+                for child in sub_workflow_references(&sub_wf) {
+                    if !refs.iter().any(|r| r == &child) {
+                        refs.push(child);
+                    }
+                }
+            }
+        }
+    }
+    refs
+}
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use a2w_ir::{Node, Workflow};
@@ -287,6 +318,57 @@ pub fn validate(wf: &Workflow) -> ValidationReport {
                          or remove it"
                     )),
                 });
+            }
+        }
+    }
+
+    // --- Check 8 (R3 audit-fix): SubWorkflow self-reference -----------------
+    // A SubWorkflow node that names its enclosing workflow by id would loop
+    // until the runtime depth cap fires. Reject at save time so the operator
+    // sees a clear error.
+    for node in &wf.nodes {
+        if node.kind != a2w_ir::NodeKind::SubWorkflow {
+            continue;
+        }
+        let workflow_id = node
+            .params
+            .get("workflow_id")
+            .and_then(|v| v.as_str());
+        if workflow_id == Some(wf.id.as_str()) {
+            findings.push(Finding {
+                severity: Severity::Error,
+                code: FindingCode::SubWorkflowSelfReference,
+                message: format!(
+                    "sub_workflow node '{}' references the enclosing workflow '{}' \
+                     by id — would loop until the runtime depth cap",
+                    node.id, wf.id
+                ),
+                location: Location::Node(node.id.clone()),
+                suggestion: Some(
+                    "remove the self-reference, or use a distinct workflow_id"
+                        .to_string(),
+                ),
+            });
+        }
+        // Also detect inline workflow that re-uses the same id.
+        if let Some(inline) = node.params.get("workflow") {
+            if let Some(inline_id) = inline.get("id").and_then(|v| v.as_str()) {
+                if inline_id == wf.id.as_str() {
+                    findings.push(Finding {
+                        severity: Severity::Error,
+                        code: FindingCode::SubWorkflowSelfReference,
+                        message: format!(
+                            "sub_workflow node '{}' inlines a workflow whose id \
+                             matches the enclosing workflow '{}' — would loop",
+                            node.id, wf.id
+                        ),
+                        location: Location::Node(node.id.clone()),
+                        suggestion: Some(
+                            "use a distinct id in the inline workflow's `id` field"
+                                .to_string(),
+                        ),
+                    });
+                }
             }
         }
     }

@@ -29,13 +29,22 @@ pub enum ItemSource {
 
 /// A single unit of data flowing through the workflow.
 ///
-/// `json` is the payload; `source` is the lineage edge identifying its origin.
+/// `json` is the payload; `source` is the lineage edge identifying its origin;
+/// `output_port` is the zero-based output port the producing node routed this
+/// item to (default `0` — the standard single-port behaviour). The engine uses
+/// it to route items through downstream connections whose `from_port` matches.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     /// The JSON payload.
     pub json: serde_json::Value,
     /// Lineage: which node (or the trigger) produced this item.
     pub source: ItemSource,
+    /// Which of the producing node's output ports this item exits on.
+    /// Defaults to `0`; multi-port executors (Branch, Switch) set this per
+    /// item. Field is `#[serde(default)]` so pre-existing serialized
+    /// node-output payloads continue to deserialize.
+    #[serde(default)]
+    pub output_port: usize,
 }
 
 impl Item {
@@ -45,6 +54,7 @@ impl Item {
         Self {
             json,
             source: ItemSource::Trigger,
+            output_port: 0,
         }
     }
 
@@ -61,6 +71,15 @@ impl Item {
                 node_id: node_id.into(),
                 item_index,
             },
+            output_port: 0,
         }
+    }
+
+    /// Builder: assign this item to a specific output port (used by Branch /
+    /// Switch / Loop to route items down the correct downstream connection).
+    #[must_use]
+    pub fn on_port(mut self, output_port: usize) -> Self {
+        self.output_port = output_port;
+        self
     }
 }

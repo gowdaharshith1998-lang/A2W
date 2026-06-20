@@ -19,6 +19,7 @@ a2w-optimizer = { workspace = true }
 a2w-templates = { workspace = true }
 a2w-llm = { workspace = true }
 a2w-author = { workspace = true }
+a2w-store = { workspace = true }
 rmcp = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std"] }
 serde = { workspace = true }

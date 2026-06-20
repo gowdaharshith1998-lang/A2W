@@ -12,9 +12,18 @@ a2w-nodes = { workspace = true }
 a2w-validator = { workspace = true }
 a2w-store = { workspace = true }
 axum = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tower-http = { workspace = true }
+tower = { workspace = true }
+tokio-util = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
+tower = { workspace = true }

@@ -69,6 +69,21 @@ pub enum CodeError {
     Call(String),
 }
 
+/// Default cap on the per-item input payload handed to a WASM module.
+const DEFAULT_MAX_INPUT_BYTES: usize = 1024 * 1024;
+
+/// Read `A2W_CODE_MAX_INPUT_BYTES` once and cache it; default 1 MiB.
+fn max_input_bytes() -> usize {
+    use std::sync::OnceLock;
+    static CAP: OnceLock<usize> = OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("A2W_CODE_MAX_INPUT_BYTES")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(DEFAULT_MAX_INPUT_BYTES)
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Wasm source.
 // ---------------------------------------------------------------------------
@@ -105,17 +120,49 @@ impl WasmSource {
     }
 
     /// Resolve this source to the raw WASM bytes.
+    ///
+    /// Audit-fix: `WasmSource::Path` is now confined to a single directory
+    /// rooted at `A2W_CODE_WASM_DIR` (canonicalized). Without that env var set
+    /// the path source is rejected outright — protects against a workflow that
+    /// names `/etc/passwd` or `/proc/self/environ`.
     fn load(&self) -> Result<Vec<u8>, CodeError> {
         match self {
             WasmSource::Base64(b64) => base64::engine::general_purpose::STANDARD
                 .decode(b64.as_bytes())
                 .map_err(|e| CodeError::BadParams(format!("`wasm.base64` is not valid base64: {e}"))),
-            WasmSource::Path(path) => std::fs::read(path).map_err(|e| {
-                CodeError::BadParams(format!(
-                    "`wasm.path` could not be read ('{}'): {e}",
-                    path.display()
-                ))
-            }),
+            WasmSource::Path(path) => {
+                let root = std::env::var("A2W_CODE_WASM_DIR").map_err(|_| {
+                    CodeError::BadParams(
+                        "`wasm.path` is disabled: set A2W_CODE_WASM_DIR to a directory \
+                         containing the trusted .wasm modules"
+                            .to_string(),
+                    )
+                })?;
+                let root = std::fs::canonicalize(&root).map_err(|e| {
+                    CodeError::BadParams(format!(
+                        "A2W_CODE_WASM_DIR ('{root}') is not a usable directory: {e}"
+                    ))
+                })?;
+                let abs = std::fs::canonicalize(path).map_err(|e| {
+                    CodeError::BadParams(format!(
+                        "`wasm.path` could not be resolved ('{}'): {e}",
+                        path.display()
+                    ))
+                })?;
+                if !abs.starts_with(&root) {
+                    return Err(CodeError::BadParams(format!(
+                        "`wasm.path` ('{}') is outside the permitted A2W_CODE_WASM_DIR ('{}')",
+                        abs.display(),
+                        root.display()
+                    )));
+                }
+                std::fs::read(&abs).map_err(|e| {
+                    CodeError::BadParams(format!(
+                        "`wasm.path` could not be read ('{}'): {e}",
+                        abs.display()
+                    ))
+                })
+            }
         }
     }
 }
@@ -324,11 +371,16 @@ impl NodeExecutor for CodeStep {
             Arc::clone(&self.runner)
         };
 
-        // One output item per input item; with no input, still emit one item so
-        // a code step with no upstream data is observable.
-        let count = input.len().max(1);
+        // One output item per input item. Audit-2 fix (CRITICAL —
+        // unselected-branch side effect): no input → no work, mirroring
+        // mcp_tool_call. WASM execution is expensive; running it on an empty
+        // unselected branch arm is both incorrect and a DoS vector.
+        if input.is_empty() {
+            return Ok(Vec::new());
+        }
+        let count = input.len();
         let mut out = Vec::with_capacity(count);
-        for item in input.iter().map(Some).chain(std::iter::repeat(None)).take(count) {
+        for item in input.iter().map(Some) {
             // Serialise the item's json to bytes (empty object when there is no
             // input item).
             let payload = item.map_or_else(
@@ -337,6 +389,18 @@ impl NodeExecutor for CodeStep {
             );
             let input_bytes = serde_json::to_vec(&payload)
                 .map_err(|e| NodeError::Runtime(format!("failed to serialise input item: {e}")))?;
+            // Audit-fix: cap the per-item input payload so a malicious upstream
+            // node can't OOM the WASM sandbox by handing it an enormous JSON
+            // blob. Default 1 MiB; tunable via `A2W_CODE_MAX_INPUT_BYTES`.
+            let max_input = max_input_bytes();
+            if input_bytes.len() > max_input {
+                return Err(NodeError::Runtime(format!(
+                    "code_step input ({} bytes) exceeds the maximum allowed \
+                     ({} bytes, set A2W_CODE_MAX_INPUT_BYTES to change)",
+                    input_bytes.len(),
+                    max_input
+                )));
+            }
 
             // extism's call is blocking: run it off the async runtime.
             let runner = Arc::clone(&runner);
@@ -362,7 +426,10 @@ impl NodeExecutor for CodeStep {
         let function = Self::function(&ctx.params)?;
         let _config = Self::config(&ctx.params)?;
 
-        let count = input.len().max(1);
+        if input.is_empty() {
+            return Ok(Vec::new());
+        }
+        let count = input.len();
         let mut out = Vec::with_capacity(count);
         for _ in 0..count {
             out.push(Item::produced(
@@ -439,6 +506,10 @@ mod tests {
             params,
             mode,
             credentials: None,
+        sub_workflows: None,
+        sub_workflow_depth: 0,
+        workflow_id: None,
+        approvals: None,
         }
     }
 
@@ -542,7 +613,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_with_no_input_emits_one_item_with_empty_object_payload() {
+    async fn execute_with_no_input_emits_zero_items_audit2() {
+        // Audit-2: empty input → no WASM invocation. The runner must never
+        // have been called.
         let runner = Arc::new(MockRunner::returning(b"{}".to_vec()));
         let node = CodeStep::new(runner.clone());
         let ctx = ctx(
@@ -550,9 +623,11 @@ mod tests {
             ExecutionMode::Run,
         );
         let out = node.execute(&ctx, vec![]).await.expect("execute ok");
-        assert_eq!(out.len(), 1);
-        // The empty-input payload is the empty object `{}`.
-        assert_eq!(runner.seen.lock().unwrap()[0].1, b"{}");
+        assert!(out.is_empty(), "no input → no side-effect, no items");
+        assert!(
+            runner.seen.lock().unwrap().is_empty(),
+            "runner must not be invoked on empty input"
+        );
     }
 
     #[tokio::test]

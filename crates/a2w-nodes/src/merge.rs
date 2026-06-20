@@ -21,6 +21,12 @@ impl NodeExecutor for Merge {
     }
 
     async fn execute(&self, _ctx: &NodeContext, input: Vec<Item>) -> Result<Vec<Item>, NodeError> {
-        Ok(input)
+        // Audit-2 fix (CRITICAL — port-routing silent drop): pass-through
+        // executors MUST reset `output_port` to 0 on every output item.
+        // Items inherited from a port-routing producer (Branch, Switch, Loop)
+        // arrive carrying the upstream port; if we forwarded them unchanged,
+        // a downstream single-port edge (`from_port=0`) would filter them out
+        // in the engine's `gather_input`, silently dropping the whole stream.
+        Ok(input.into_iter().map(|i| i.on_port(0)).collect())
     }
 }

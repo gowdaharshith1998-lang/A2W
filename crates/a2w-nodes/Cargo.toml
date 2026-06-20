@@ -8,6 +8,8 @@ description = "A2W core node executors: WebhookTrigger, HttpRequest, Transform, 
 [dependencies]
 a2w-ir = { workspace = true }
 a2w-engine = { workspace = true }
+a2w-llm = { workspace = true }
+a2w-expr = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
@@ -23,7 +25,11 @@ rmcp = { workspace = true, features = ["client", "transport-child-process"] }
 extism = { workspace = true }
 # base64 decoding for the code_step node's inline `{ "base64": "..." }` wasm source.
 base64 = { workspace = true }
+# Hostname normalization (trailing dot strip + IDN → ASCII) for the SSRF guard.
+idna = { workspace = true }
+# Streaming + futures combinators used by the bounded response-body reader.
+futures = { workspace = true }
 
 [dev-dependencies]
 a2w-validator = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["time", "macros"] }

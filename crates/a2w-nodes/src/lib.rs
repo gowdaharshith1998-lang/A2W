@@ -14,24 +14,38 @@
 
 #![forbid(unsafe_code)]
 
+mod approval;
+mod branch;
 mod code_step;
 mod http_request;
+mod llm_call;
+mod loop_node;
 mod mcp_tool_call;
 mod merge;
 mod schedule_trigger;
+mod sub_workflow;
+mod switch;
 mod template;
 mod transform;
+mod wait;
 mod webhook_trigger;
 
+pub use approval::Approval;
+pub use branch::Branch;
 pub use code_step::{CodeError, CodeStep, ExtismRunner, WasmRunner};
 pub use http_request::{check_url_allowed, ip_is_blocked, EgressPolicy, HttpRequest};
+pub use llm_call::LlmCall;
+pub use loop_node::Loop;
 pub use mcp_tool_call::{
     check_mcp_command_allowed, check_mcp_command_allowed_with_list, McpError, McpInvoker,
     McpServerSpec, McpToolCall, RmcpInvoker,
 };
 pub use merge::Merge;
 pub use schedule_trigger::ScheduleTrigger;
+pub use sub_workflow::SubWorkflow;
+pub use switch::Switch;
 pub use transform::Transform;
+pub use wait::Wait;
 pub use webhook_trigger::WebhookTrigger;
 
 use std::sync::Arc;
@@ -48,9 +62,16 @@ pub fn default_registry() -> NodeRegistry {
     NodeRegistry::new()
         .with(NodeKind::WebhookTrigger, Arc::new(WebhookTrigger))
         .with(NodeKind::ScheduleTrigger, Arc::new(ScheduleTrigger))
-        .with(NodeKind::HttpRequest, Arc::new(HttpRequest::default()))
+        .with(NodeKind::HttpRequest, Arc::new(HttpRequest))
         .with(NodeKind::Transform, Arc::new(Transform))
         .with(NodeKind::Merge, Arc::new(Merge))
         .with(NodeKind::McpToolCall, Arc::new(McpToolCall::default()))
         .with(NodeKind::CodeStep, Arc::new(CodeStep::default()))
+        .with(NodeKind::Branch, Arc::new(Branch))
+        .with(NodeKind::Switch, Arc::new(Switch))
+        .with(NodeKind::Loop, Arc::new(Loop))
+        .with(NodeKind::Wait, Arc::new(Wait))
+        .with(NodeKind::SubWorkflow, Arc::new(SubWorkflow))
+        .with(NodeKind::LlmCall, Arc::new(LlmCall::default()))
+        .with(NodeKind::Approval, Arc::new(Approval))
 }

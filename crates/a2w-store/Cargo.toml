@@ -8,14 +8,17 @@ description = "A2W persistence: workflows, run history, and an AES-256-GCM encry
 [dependencies]
 a2w-ir = { workspace = true }
 a2w-engine = { workspace = true }
+a2w-validator = { workspace = true }
 sqlx = { workspace = true }
-aes-gcm = { workspace = true }
+aes-gcm = { workspace = true, features = ["zeroize"] }
 base64 = { workspace = true }
+zeroize = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 a2w-nodes = { workspace = true }

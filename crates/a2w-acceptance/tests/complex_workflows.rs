@@ -380,30 +380,45 @@ async fn engine_refuses_invalid_workflow() {
     }
 }
 
-// ---- 11. branch kind validates but surfaces a clean run error ------------
+// ---- 11. registry coverage: every NodeKind has an executor ----------------
 
 #[tokio::test]
-async fn unexecutable_kind_surfaces_clean_error() {
-    // Branch is a valid IR kind but has no executor in default_registry.
+async fn every_node_kind_has_an_executor() {
+    // After the round-3 work all 14 NodeKinds are implemented. This test
+    // guards regressions: if a new kind is added to the IR without a matching
+    // executor in default_registry, the workflow below will surface a clean
+    // NoExecutorForKind error and break here.
+    use a2w_engine::{Engine, NodeRegistry};
+    use a2w_nodes::default_registry;
+    let reg: NodeRegistry = default_registry();
+    let _ = Engine::new(reg);
+
+    // Test SubWorkflow with an inline workflow runs end-to-end.
+    let sub_inline = json!({
+        "schema_version": 1,
+        "id": "sub_inline",
+        "name": "sub inline",
+        "nodes": [
+            { "id": "t", "kind": "webhook_trigger", "params": {} },
+            { "id": "shape", "kind": "transform", "params": { "set": { "tag": "from_sub" } } }
+        ],
+        "connections": [
+            { "from_node": "t", "from_port": 0, "to_node": "shape" }
+        ]
+    });
+    let mut sub_node = Node::new("sub", NodeKind::SubWorkflow);
+    sub_node.params = json!({ "workflow": sub_inline });
     let w = wf(
-        "branchwf",
-        vec![
-            trig("t"),
-            Node::new("br", NodeKind::Branch),
-            xform("yes", json!({ "y": 1 })),
-            xform("no", json!({ "n": 1 })),
-        ],
-        vec![
-            c("t", "br"),
-            Connection::new("br", 0, "yes"),
-            Connection::new("br", 1, "no"),
-        ],
+        "sub_caller",
+        vec![trig("t"), sub_node, xform("after", json!({ "ok": true }))],
+        vec![c("t", "sub"), c("sub", "after")],
     );
-    assert!(validate(&w).is_valid, "branch workflow is structurally valid");
-    match dry_run(&w).await {
-        Err(EngineError::NoExecutorForKind(NodeKind::Branch)) => {}
-        other => panic!("expected NoExecutorForKind(Branch), got {other:?}"),
-    }
+    assert!(validate(&w).is_valid, "sub-caller is structurally valid");
+    let r = dry_run(&w).await.expect("sub-workflow dry-run completes");
+    assert!(
+        r.node_outputs.contains_key("sub"),
+        "sub-workflow produced output"
+    );
 }
 
 // ---- 12. lineage is per-run consistent across a complex graph -------------

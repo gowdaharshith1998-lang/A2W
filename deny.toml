@@ -1,0 +1,39 @@
+# cargo-deny configuration for A2W.
+# Aim: keep the dep tree compliant (licences, no known CVEs) without blocking
+# day-to-day work on a noisy advisory.
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# License set covers the standard permissive licences plus the OpenSSL/ISC
+# variants that show up in the TLS/sql stacks. Tighten this as needed.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "Zlib",
+    "MPL-2.0",
+    "OpenSSL",
+]
+confidence-threshold = 0.92
+exceptions = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -6,11 +6,14 @@
 //! built as JSON (`serde_json::json!`) exactly as an agent would supply them,
 //! and outputs are asserted as JSON.
 
+use std::sync::Arc;
+
 use a2w_llm::MockLlm;
 use a2w_mcp::{
-    A2wServer, ApplyOpsInput, GetTemplateInput, OptimizeInput, RunInput, RunTestsInput,
-    SearchTemplatesInput, WorkflowInput,
+    A2wServer, ApplyOpsInput, DeleteCredentialInput, GetTemplateInput, McpPolicy, OptimizeInput,
+    RunInput, RunTestsInput, SearchTemplatesInput, StoreCredentialInput, WorkflowInput,
 };
+use a2w_store::{Store, Vault};
 use serde_json::{json, Value};
 
 /// A small valid workflow: `webhook_trigger -> transform`. Pure, no network.
@@ -378,7 +381,7 @@ fn get_template_unknown_id_is_tool_error() {
 
 #[tokio::test]
 async fn generate_logic_with_mock_succeeds() {
-    let server = A2wServer::new();
+    let server = server_allow_all();
     // A valid, dry-runnable workflow the mock returns on the first call.
     let wf = json!({
         "schema_version": 1,
@@ -409,9 +412,250 @@ async fn generate_logic_with_mock_succeeds() {
     );
 }
 
+/// Build an MCP server backed by an in-memory store + deterministic vault,
+/// with the `allow_all` policy so the credential-write tools succeed in tests.
+async fn server_with_vault() -> A2wServer {
+    let store = Arc::new(
+        Store::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory store"),
+    );
+    let vault = Arc::new(Vault::new([42u8; 32]));
+    A2wServer::with_vault_and_policy(store, vault, McpPolicy::allow_all())
+}
+
+/// Build a stateless MCP server with the `allow_all` policy.
+fn server_allow_all() -> A2wServer {
+    A2wServer::with_policy(McpPolicy::allow_all())
+}
+
+#[tokio::test]
+async fn credential_tools_without_vault_return_invalid_params() {
+    // allow-all policy so we're testing the vault gate, not the policy gate.
+    let server = server_allow_all();
+    let err = server
+        .store_credential_logic(StoreCredentialInput {
+            id: "k".into(),
+            name: "K".into(),
+            secret: "s".into(),
+        })
+        .await
+        .expect_err("credential tools must error without a vault");
+    assert!(
+        err.message.contains("A2W_MASTER_KEY"),
+        "error should reference the env var: {}",
+        err.message
+    );
+
+    let err = server
+        .list_credentials_logic()
+        .await
+        .expect_err("list without vault must error");
+    assert!(err.message.contains("A2W_MASTER_KEY"), "got: {}", err.message);
+}
+
+#[tokio::test]
+async fn default_policy_blocks_wf_run() {
+    let server = A2wServer::new(); // default policy is read-only
+    let err = server
+        .run_logic(RunInput {
+            workflow: valid_workflow(),
+            trigger_input: vec![],
+        })
+        .await
+        .expect_err("wf_run must be blocked by the default policy");
+    assert!(
+        err.message.contains("A2W_MCP_ALLOW_RUN"),
+        "error must name the env var: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn default_policy_blocks_generate() {
+    let server = A2wServer::new();
+    let mock = MockLlm::new(vec!["unused".into()]);
+    let err = server
+        .generate_logic("anything", 1, &mock)
+        .await
+        .expect_err("generate must be blocked by the default policy");
+    assert!(
+        err.message.contains("A2W_MCP_ALLOW_LLM"),
+        "error must name the env var: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn default_policy_blocks_credential_writes_even_when_vault_present() {
+    let store = Arc::new(
+        Store::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory store"),
+    );
+    let vault = Arc::new(Vault::new([42u8; 32]));
+    let server = A2wServer::with_vault(store, vault); // default = read-only
+
+    let err = server
+        .store_credential_logic(StoreCredentialInput {
+            id: "k".into(),
+            name: "n".into(),
+            secret: "s".into(),
+        })
+        .await
+        .expect_err("store_credential must be blocked by default policy");
+    assert!(
+        err.message.contains("A2W_MCP_ALLOW_CREDENTIAL_WRITES"),
+        "error must name the env var: {}",
+        err.message
+    );
+
+    let err = server
+        .delete_credential_logic(DeleteCredentialInput { id: "k".into() })
+        .await
+        .expect_err("delete_credential must be blocked by default policy");
+    assert!(
+        err.message.contains("A2W_MCP_ALLOW_CREDENTIAL_WRITES"),
+        "error must name the env var: {}",
+        err.message
+    );
+
+    // But listing is always allowed when the vault is configured.
+    let _list = server
+        .list_credentials_logic()
+        .await
+        .expect("listing must remain allowed under the default policy");
+}
+
+#[tokio::test]
+async fn credential_tools_round_trip_with_vault() {
+    let server = server_with_vault().await;
+
+    let saved = server
+        .store_credential_logic(StoreCredentialInput {
+            id: "k1".into(),
+            name: "Display".into(),
+            secret: "topsecret".into(),
+        })
+        .await
+        .expect("store credential");
+    assert_eq!(saved["saved"], json!("k1"));
+
+    let listed = server
+        .list_credentials_logic()
+        .await
+        .expect("list credentials");
+    let arr = listed.as_array().expect("array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["id"], json!("k1"));
+    assert_eq!(arr[0]["name"], json!("Display"));
+    assert!(
+        !listed.to_string().contains("topsecret"),
+        "listing must NEVER contain the plaintext secret: {listed}"
+    );
+
+    let deleted = server
+        .delete_credential_logic(DeleteCredentialInput { id: "k1".into() })
+        .await
+        .expect("delete");
+    assert_eq!(deleted["deleted"], json!("k1"));
+
+    let listed = server
+        .list_credentials_logic()
+        .await
+        .expect("list after delete");
+    assert_eq!(listed.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn credential_tools_reject_empty_fields() {
+    let server = server_with_vault().await;
+    let cases: Vec<StoreCredentialInput> = vec![
+        StoreCredentialInput {
+            id: "".into(),
+            name: "n".into(),
+            secret: "s".into(),
+        },
+        StoreCredentialInput {
+            id: "k".into(),
+            name: "".into(),
+            secret: "s".into(),
+        },
+        StoreCredentialInput {
+            id: "k".into(),
+            name: "n".into(),
+            secret: "".into(),
+        },
+    ];
+    for case in cases {
+        let id_field = case.id.clone();
+        let err = server
+            .store_credential_logic(case)
+            .await
+            .expect_err("must reject empty field");
+        assert!(
+            err.message.contains("non-empty"),
+            "expected 'non-empty' in message for id='{id_field}': {}",
+            err.message
+        );
+    }
+}
+
+#[tokio::test]
+async fn credential_resolves_into_http_node_via_engine() {
+    // End-to-end: store a credential, then dry-run a workflow whose HTTP node
+    // names that credential_ref. The resolver should be wired into the engine
+    // by `A2wServer::with_vault`, so the dry-run succeeds (dry-run mocks the
+    // network but still validates params).
+    let server = server_with_vault().await;
+    server
+        .store_credential_logic(StoreCredentialInput {
+            id: "slack_token".into(),
+            name: "Slack".into(),
+            secret: "xoxb-secret-token".into(),
+        })
+        .await
+        .expect("store credential");
+
+    let wf = json!({
+        "schema_version": 1,
+        "id": "wf_cred",
+        "name": "cred",
+        "nodes": [
+            { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+            {
+                "id": "call",
+                "kind": "http_request",
+                "params": {
+                    "url": "https://api.example.com/",
+                    "auth": { "credential_ref": "slack_token", "scheme": "bearer" }
+                }
+            }
+        ],
+        "connections": [
+            { "from_node": "trigger", "from_port": 0, "to_node": "call" }
+        ]
+    });
+    let result = server
+        .dry_run_logic(RunInput {
+            workflow: wf,
+            trigger_input: vec![json!({})],
+        })
+        .await
+        .expect("dry_run with credential_ref must succeed under wired vault");
+    assert_eq!(result["status"], json!("completed"), "result: {result}");
+    // The HTTP node's dry_run never touches the network, so the secret is not
+    // exfiltrated. Sanity-check that no event mentions it.
+    let serialized = result.to_string();
+    assert!(
+        !serialized.contains("xoxb-secret-token"),
+        "result must NEVER carry the plaintext secret: {serialized}"
+    );
+}
+
 #[tokio::test]
 async fn generate_logic_with_mock_repairs_then_succeeds() {
-    let server = A2wServer::new();
+    let server = server_allow_all();
     // First an invalid workflow (dangling target), then a valid one.
     let invalid = json!({
         "schema_version": 1, "id": "bad", "name": "bad",

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use thiserror::Error;
 
-use a2w_ir::NodeKind;
+use a2w_ir::{NodeKind, Workflow};
 
 use crate::item::Item;
 
@@ -41,6 +41,24 @@ pub struct NodeContext {
     /// `credential_ref`s through this so plaintext secrets never live in the IR
     /// or in persisted run records. `None` in dry runs and tests.
     pub credentials: Option<Arc<dyn CredentialResolver>>,
+    /// Optional resolver of stored workflows. The SubWorkflow executor uses
+    /// this to load a workflow by id and run it as a sub-routine. `None`
+    /// when SubWorkflow support is not wired (the executor then accepts only
+    /// the inline `workflow` param form).
+    pub sub_workflows: Option<Arc<dyn SubWorkflowResolver>>,
+    /// SubWorkflow recursion depth, starting at `0` for the top-level run.
+    /// The executor refuses to descend past
+    /// [`crate::engine::DEFAULT_MAX_SUB_WORKFLOW_DEPTH`].
+    pub sub_workflow_depth: u8,
+    /// R4 audit-fix: the id of the workflow that owns this node, so the
+    /// SubWorkflow executor can pass it to [`SubWorkflowResolver::get_workflow`]
+    /// for owner-scoped lookups. `None` only when the engine is invoked
+    /// outside a top-level workflow run (e.g. unit tests).
+    pub workflow_id: Option<String>,
+    /// Optional approval gate. The `Approval` executor uses it to record a
+    /// pending approval row and poll for a decision. `None` makes the
+    /// executor return a clear "approvals not configured" error.
+    pub approvals: Option<Arc<dyn ApprovalGate>>,
 }
 
 impl NodeContext {
@@ -63,8 +81,7 @@ impl NodeContext {
 
 impl fmt::Debug for NodeContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The credential resolver is deliberately not printed (it is opaque and
-        // may guard secrets); show only whether one is present.
+        // Resolvers are opaque and may guard secrets; show presence only.
         f.debug_struct("NodeContext")
             .field("run_id", &self.run_id)
             .field("node_id", &self.node_id)
@@ -72,6 +89,12 @@ impl fmt::Debug for NodeContext {
             .field("params", &self.params)
             .field("mode", &self.mode)
             .field("credentials", &self.credentials.as_ref().map(|_| "<resolver>"))
+            .field(
+                "sub_workflows",
+                &self.sub_workflows.as_ref().map(|_| "<resolver>"),
+            )
+            .field("sub_workflow_depth", &self.sub_workflow_depth)
+            .field("approvals", &self.approvals.as_ref().map(|_| "<gate>"))
             .finish()
     }
 }
@@ -91,6 +114,79 @@ pub enum NodeError {
     /// A generic runtime failure during execution.
     #[error("runtime error: {0}")]
     Runtime(String),
+}
+
+/// Outcome of an approval gate poll. Drives the `Approval` executor's
+/// port-0 (approved) / port-1 (rejected) routing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalOutcome {
+    /// The approval was granted.
+    Approved {
+        /// Free-text attribution from `POST /approvals/{id}`.
+        decided_by: Option<String>,
+    },
+    /// The approval was explicitly rejected.
+    Rejected {
+        /// Free-text attribution.
+        decided_by: Option<String>,
+    },
+}
+
+/// A pluggable approval gate. The `Approval` executor records a pending row
+/// via `request` then asks `poll` on a backoff until a decision arrives or
+/// the configured timeout elapses (timeout = rejection by policy).
+#[async_trait]
+pub trait ApprovalGate: Send + Sync {
+    /// Create a pending approval row for `(run_id, node_id, idx)` with
+    /// `payload_json` shown to the human approver. Returns the approval id
+    /// that downstream `poll` calls reference.
+    ///
+    /// # Errors
+    /// [`CredentialError`] (re-used to keep the error type set small) on
+    /// underlying store failure.
+    async fn request(
+        &self,
+        run_id: &str,
+        node_id: &str,
+        idx: usize,
+        payload_json: &str,
+    ) -> Result<String, CredentialError>;
+
+    /// Poll for the decision on `approval_id`. `Ok(None)` means "still
+    /// pending"; `Ok(Some(_))` is the final decision.
+    ///
+    /// # Errors
+    /// [`CredentialError`] on a store read failure.
+    async fn poll(
+        &self,
+        approval_id: &str,
+    ) -> Result<Option<ApprovalOutcome>, CredentialError>;
+}
+
+/// Resolves a stored workflow by its id, enabling the SubWorkflow executor to
+/// invoke another workflow as a sub-routine. Backed by `a2w_store::Store` in
+/// production; tests inject a deterministic mock.
+///
+/// R4 audit-fix: the resolver carries an OWNER context — the workflow id
+/// that is making the lookup — so a multi-tenant store implementation can
+/// enforce that workflow A may only resolve workflow B when A and B share
+/// an owner. The default single-tenant store ignores it.
+#[async_trait]
+pub trait SubWorkflowResolver: Send + Sync {
+    /// Fetch a workflow by id, or `Ok(None)` when absent.
+    ///
+    /// `caller_workflow_id` is the id of the workflow whose SubWorkflow
+    /// node is making the lookup. Owner-scoped stores use it to refuse
+    /// cross-tenant reads.
+    ///
+    /// # Errors
+    /// Returns a [`CredentialError`] (re-used to avoid a third error type) on
+    /// a lookup failure; the executor surfaces this as a `NodeError::Runtime`.
+    async fn get_workflow(
+        &self,
+        caller_workflow_id: &str,
+        workflow_id: &str,
+    ) -> Result<Option<Workflow>, CredentialError>;
 }
 
 /// Resolves a workflow's `credential_ref`s to their secret values at run time,

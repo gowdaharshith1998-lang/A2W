@@ -61,6 +61,7 @@ use a2w_engine::{Engine, ExecutionMode, MemoryEventLog, RunResult};
 use a2w_ir::{NodeKind, Workflow};
 use a2w_llm::{AnthropicClient, LlmClient};
 use a2w_optimizer::{analyze, apply, profile, IrOp};
+use a2w_store::{Store, StoreCredentialResolver, Vault};
 use a2w_testkit::{run_tests, TestCase};
 
 // ---------------------------------------------------------------------------
@@ -152,6 +153,102 @@ pub struct GenerateInput {
     pub max_repairs: Option<u32>,
 }
 
+/// Input for `wf_store_credential` — upsert one credential under its id.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StoreCredentialInput {
+    /// Stable identifier; matches the `credential_ref` used in workflow nodes.
+    pub id: String,
+    /// Human-readable display name.
+    pub name: String,
+    /// Plaintext secret. Encrypted under the AES-256-GCM master key and never
+    /// returned by any later tool call.
+    pub secret: String,
+}
+
+/// Input for `wf_delete_credential` — delete one credential by id.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteCredentialInput {
+    /// The credential id to delete (no-op when absent).
+    pub id: String,
+}
+
+// ---------------------------------------------------------------------------
+// Tool-allow policy.
+//
+// The MCP stdio transport is **local-trust**: anyone who can spawn this
+// process has full access to its tools (there is no per-call authentication
+// over stdio). We therefore expose a `McpPolicy` so the operator can
+// explicitly opt in to:
+//
+//   * actually executing real side effects (`wf_run`)
+//   * spending LLM budget (`generate_workflow_from_prompt`)
+//   * writing or deleting credentials (`wf_store_credential` /
+//     `wf_delete_credential`)
+//
+// The default policy is **read-only**: validate / dry-run / profile / optimize
+// / list templates / list credentials succeed; the gated tools return a clean
+// `invalid_params`-class error naming the env var the operator must set.
+// ---------------------------------------------------------------------------
+
+/// Per-tool allowlist enforced on top of the engine wiring.
+#[derive(Debug, Clone)]
+pub struct McpPolicy {
+    /// Allow `wf_run` to execute real side effects (HTTP, MCP child processes,
+    /// WASM code steps). Set via `A2W_MCP_ALLOW_RUN=true`.
+    pub allow_run: bool,
+    /// Allow `generate_workflow_from_prompt` (costs LLM budget). Set via
+    /// `A2W_MCP_ALLOW_LLM=true`.
+    pub allow_llm: bool,
+    /// Allow `wf_store_credential` and `wf_delete_credential` to mutate the
+    /// vault. Set via `A2W_MCP_ALLOW_CREDENTIAL_WRITES=true`. (Reading the
+    /// credential listing — id + name + created_at only — is always allowed
+    /// when the vault is configured.)
+    pub allow_credential_writes: bool,
+}
+
+impl Default for McpPolicy {
+    /// Fail closed: every destructive tool is disabled.
+    fn default() -> Self {
+        Self {
+            allow_run: false,
+            allow_llm: false,
+            allow_credential_writes: false,
+        }
+    }
+}
+
+impl McpPolicy {
+    /// Build a policy from `A2W_MCP_ALLOW_*` env vars (defaults to read-only).
+    #[must_use]
+    pub fn from_env() -> Self {
+        fn bool_env(name: &str) -> bool {
+            std::env::var(name)
+                .ok()
+                .map(|v| {
+                    let v = v.trim();
+                    v.eq_ignore_ascii_case("true") || v == "1"
+                })
+                .unwrap_or(false)
+        }
+        Self {
+            allow_run: bool_env("A2W_MCP_ALLOW_RUN"),
+            allow_llm: bool_env("A2W_MCP_ALLOW_LLM"),
+            allow_credential_writes: bool_env("A2W_MCP_ALLOW_CREDENTIAL_WRITES"),
+        }
+    }
+
+    /// Policy that allows every tool. Use in tests or controlled environments
+    /// only.
+    #[must_use]
+    pub fn allow_all() -> Self {
+        Self {
+            allow_run: true,
+            allow_llm: true,
+            allow_credential_writes: true,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Server.
 // ---------------------------------------------------------------------------
@@ -162,9 +259,20 @@ pub struct GenerateInput {
 /// behind an [`Arc`] so every tool call reuses the same registry (and its
 /// pooled HTTP client). The struct is [`Clone`] because rmcp's service layer may
 /// clone the handler; cloning is cheap (an `Arc` bump plus the router).
+///
+/// When constructed via [`A2wServer::with_vault`], the engine is wired with a
+/// [`StoreCredentialResolver`] and the `wf_*_credential` tools become live;
+/// otherwise those tools return a `service unavailable`-class tool error.
 #[derive(Clone)]
 pub struct A2wServer {
     engine: Arc<Engine>,
+    /// Persisted store, shared with the credential vault. `None` when the
+    /// server runs in stateless mode (no vault, no run history persistence).
+    store: Option<Arc<Store>>,
+    /// AES-256-GCM credential vault. `None` when `A2W_MASTER_KEY` is unset.
+    vault: Option<Arc<Vault>>,
+    /// Per-tool allowlist; defaults to read-only, fail-closed.
+    policy: McpPolicy,
     // Read by the `#[tool_handler]`-generated `ServerHandler` impl to dispatch
     // tool calls. The dead-code lint can't see that use because it lives in a
     // separate, macro-generated impl block, so it spuriously flags the field;
@@ -233,12 +341,93 @@ fn node_kind_name(kind: NodeKind) -> &'static str {
 }
 
 impl A2wServer {
-    /// Construct a server with a fresh engine over the default node registry.
+    /// Construct a server with a fresh engine, no credential vault, and a
+    /// **read-only** policy. HTTP / MCP nodes that name a `credential_ref`
+    /// will fail closed, and `wf_run` / `generate_workflow_from_prompt` /
+    /// `wf_*_credential` writes will all be rejected.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_policy(McpPolicy::default())
+    }
+
+    /// Construct a stateless server with an explicit [`McpPolicy`].
+    #[must_use]
+    pub fn with_policy(policy: McpPolicy) -> Self {
         Self {
             engine: Arc::new(Engine::new(a2w_nodes::default_registry())),
+            store: None,
+            vault: None,
+            policy,
             tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Construct a server with a shared [`Store`] + [`Vault`], wiring the
+    /// vault-backed [`StoreCredentialResolver`] into the engine so the
+    /// `credential_ref` machinery is live for `wf_run` and `wf_dry_run`. The
+    /// policy defaults to read-only; use [`A2wServer::with_vault_and_policy`]
+    /// to opt in to destructive tools.
+    #[must_use]
+    pub fn with_vault(store: Arc<Store>, vault: Arc<Vault>) -> Self {
+        Self::with_vault_and_policy(store, vault, McpPolicy::default())
+    }
+
+    /// Construct a server with a vault **and** an explicit [`McpPolicy`].
+    #[must_use]
+    pub fn with_vault_and_policy(
+        store: Arc<Store>,
+        vault: Arc<Vault>,
+        policy: McpPolicy,
+    ) -> Self {
+        let resolver = Arc::new(StoreCredentialResolver::new(
+            Arc::clone(&store),
+            Arc::clone(&vault),
+        ));
+        let engine = Engine::new(a2w_nodes::default_registry()).with_credentials(resolver);
+        Self {
+            engine: Arc::new(engine),
+            store: Some(store),
+            vault: Some(vault),
+            policy,
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    /// Read access to the server's policy (mostly for tests).
+    #[must_use]
+    pub fn policy(&self) -> &McpPolicy {
+        &self.policy
+    }
+
+    /// Borrow `(store, vault)` if both are configured, else return an
+    /// `invalid_params` tool error that names the missing env var.
+    fn require_vault(&self) -> Result<(&Arc<Store>, &Arc<Vault>), ErrorData> {
+        match (self.store.as_ref(), self.vault.as_ref()) {
+            (Some(s), Some(v)) => Ok((s, v)),
+            _ => Err(ErrorData::invalid_params(
+                "credential tools disabled: server was started without \
+                 A2W_MASTER_KEY (set A2W_MASTER_KEY to a base64 32-byte key \
+                 and restart)",
+                None,
+            )),
+        }
+    }
+
+    /// Reject the call when `flag` is false, naming the env var the operator
+    /// must set to enable it.
+    fn require_policy(&self, flag: bool, env_var: &str, tool: &str) -> Result<(), ErrorData> {
+        if flag {
+            Ok(())
+        } else {
+            Err(ErrorData::invalid_params(
+                format!(
+                    "tool '{tool}' disabled by policy: server was started without \
+                     {env_var}=true. Restart with {env_var}=true to allow this tool. \
+                     Note: the MCP stdio transport is local-trust; treat any process \
+                     that can spawn this server as fully authorized."
+                ),
+                None,
+            ))
         }
     }
 
@@ -300,19 +489,38 @@ impl A2wServer {
         self.run_in_mode(input, ExecutionMode::DryRun).await
     }
 
-    /// `wf_run` logic: run the workflow for real (HTTP nodes make real calls;
-    /// `McpToolCall` returns NotImplemented for now).
+    /// `wf_run` logic: run the workflow for real (HTTP nodes make real calls).
+    ///
+    /// **Policy-gated:** rejected unless the server was started with
+    /// `A2W_MCP_ALLOW_RUN=true`.
     ///
     /// # Errors
-    /// As [`A2wServer::dry_run_logic`].
+    /// [`ErrorData::invalid_params`] when the policy disallows execution; otherwise
+    /// as [`A2wServer::dry_run_logic`].
     pub async fn run_logic(&self, input: RunInput) -> Result<Value, ErrorData> {
+        self.require_policy(self.policy.allow_run, "A2W_MCP_ALLOW_RUN", "wf_run")?;
         self.run_in_mode(input, ExecutionMode::Run).await
     }
 
-    /// Shared body for `wf_dry_run` / `wf_run`.
+    /// Shared body for `wf_dry_run` / `wf_run`. Persists the run when the
+    /// server has a store wired (i.e. `with_vault`/`with_vault_and_policy`).
     async fn run_in_mode(&self, input: RunInput, mode: ExecutionMode) -> Result<Value, ErrorData> {
         let wf = parse_workflow(input.workflow)?;
         let result = self.execute(&wf, input.trigger_input, mode).await?;
+
+        // Best-effort persistence when a store is configured. A persistence
+        // failure is logged to stderr but does not poison the tool result —
+        // the agent already received the work product and a re-run will save
+        // again.
+        if let Some(store) = self.store.as_ref() {
+            if let Err(e) = store.save_run(&wf.id, &result).await {
+                eprintln!(
+                    "a2w-mcp: save_run failed for run {}: {e}",
+                    result.run_id
+                );
+            }
+        }
+
         serde_json::to_value(result).map_err(internal)
     }
 
@@ -429,6 +637,81 @@ impl A2wServer {
         serde_json::to_value(tmpl.workflow).map_err(internal)
     }
 
+    /// `wf_store_credential` logic: encrypt and upsert a secret under `id`.
+    ///
+    /// # Errors
+    /// [`ErrorData::invalid_params`] when the vault is unconfigured, when any
+    /// field is empty, or when the underlying store write fails.
+    pub async fn store_credential_logic(
+        &self,
+        input: StoreCredentialInput,
+    ) -> Result<Value, ErrorData> {
+        self.require_policy(
+            self.policy.allow_credential_writes,
+            "A2W_MCP_ALLOW_CREDENTIAL_WRITES",
+            "wf_store_credential",
+        )?;
+        let (store, vault) = self.require_vault()?;
+        if input.id.trim().is_empty() {
+            return Err(ErrorData::invalid_params("`id` must be non-empty", None));
+        }
+        if input.name.trim().is_empty() {
+            return Err(ErrorData::invalid_params("`name` must be non-empty", None));
+        }
+        if input.secret.is_empty() {
+            return Err(ErrorData::invalid_params("`secret` must be non-empty", None));
+        }
+        vault
+            .store_secret(store, &input.id, &input.name, &input.secret)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    format!("credential write failed: {e}"),
+                    None,
+                )
+            })?;
+        Ok(json!({ "saved": input.id }))
+    }
+
+    /// `wf_list_credentials` logic: `[{id, name, created_at}]`. **No secrets.**
+    ///
+    /// # Errors
+    /// [`ErrorData::invalid_params`] when the vault is unconfigured, or
+    /// [`ErrorData::internal_error`] on a store read failure.
+    pub async fn list_credentials_logic(&self) -> Result<Value, ErrorData> {
+        let (store, _vault) = self.require_vault()?;
+        let rows = Vault::list_credentials(store).await.map_err(|e| {
+            ErrorData::internal_error(format!("credential list failed: {e}"), None)
+        })?;
+        let summaries: Vec<Value> = rows
+            .into_iter()
+            .map(|(id, name, created_at)| {
+                json!({ "id": id, "name": name, "created_at": created_at })
+            })
+            .collect();
+        Ok(Value::Array(summaries))
+    }
+
+    /// `wf_delete_credential` logic: delete one credential (idempotent).
+    ///
+    /// # Errors
+    /// As [`A2wServer::store_credential_logic`].
+    pub async fn delete_credential_logic(
+        &self,
+        input: DeleteCredentialInput,
+    ) -> Result<Value, ErrorData> {
+        self.require_policy(
+            self.policy.allow_credential_writes,
+            "A2W_MCP_ALLOW_CREDENTIAL_WRITES",
+            "wf_delete_credential",
+        )?;
+        let (store, _vault) = self.require_vault()?;
+        Vault::delete_credential(store, &input.id).await.map_err(|e| {
+            ErrorData::internal_error(format!("credential delete failed: {e}"), None)
+        })?;
+        Ok(json!({ "deleted": input.id }))
+    }
+
     /// Core `generate_workflow_from_prompt` logic, parameterized over the LLM
     /// client so tests can inject a deterministic mock.
     ///
@@ -445,6 +728,11 @@ impl A2wServer {
         max_repairs: u32,
         llm: &dyn LlmClient,
     ) -> Result<Value, ErrorData> {
+        self.require_policy(
+            self.policy.allow_llm,
+            "A2W_MCP_ALLOW_LLM",
+            "generate_workflow_from_prompt",
+        )?;
         let cfg = AuthorConfig { max_repairs };
         let outcome = generate_workflow_from_prompt(prompt, llm, &cfg)
             .await
@@ -611,6 +899,47 @@ impl A2wServer {
         Parameters(input): Parameters<GetTemplateInput>,
     ) -> Result<CallToolResult, ErrorData> {
         ok(self.get_template_logic(input)?)
+    }
+
+    /// Upsert a credential under its id (encrypted under the master key).
+    #[tool(
+        name = "wf_store_credential",
+        description = "Upsert a credential into the AES-256-GCM vault. Input \
+                       { id, name, secret }. Returns { saved: id }. The plaintext \
+                       is never returned by any later tool call. Requires the server \
+                       to be started with A2W_MASTER_KEY (base64 32 bytes); without \
+                       it the call returns an invalid_params error."
+    )]
+    pub async fn wf_store_credential(
+        &self,
+        Parameters(input): Parameters<StoreCredentialInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok(self.store_credential_logic(input).await?)
+    }
+
+    /// List stored credentials as `{id, name, created_at}` — no secrets.
+    #[tool(
+        name = "wf_list_credentials",
+        description = "List stored credentials as { id, name, created_at } objects. \
+                       The plaintext secret is NEVER returned. No input. Requires \
+                       A2W_MASTER_KEY on the server."
+    )]
+    pub async fn wf_list_credentials(&self) -> Result<CallToolResult, ErrorData> {
+        ok(self.list_credentials_logic().await?)
+    }
+
+    /// Delete a credential by id (idempotent).
+    #[tool(
+        name = "wf_delete_credential",
+        description = "Delete a stored credential by id (no-op when absent). Input \
+                       { id }. Returns { deleted: id }. Requires A2W_MASTER_KEY on \
+                       the server."
+    )]
+    pub async fn wf_delete_credential(
+        &self,
+        Parameters(input): Parameters<DeleteCredentialInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok(self.delete_credential_logic(input).await?)
     }
 
     /// Author a workflow from a plain-English prompt (Generate→Validate→Repair).

@@ -16,6 +16,8 @@ members = [
     "crates/a2w-import",
     "crates/a2w-openapi",
     "crates/a2w-server",
+    "crates/a2w-expr",
+    "crates/a2w-bench",
 ]
 
 [workspace.package]
@@ -30,7 +32,9 @@ schemars = "0.8"
 petgraph = "0.6"
 thiserror = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+idna = "1"
+zeroize = { version = "1", features = ["derive"] }
 async-trait = "0.1"
 futures = "0.3"
 # MCP server SDK (official modelcontextprotocol/rust-sdk). `server` already pulls
@@ -48,6 +52,30 @@ base64 = "0.22"
 extism = "1"
 # M7 HTTP server: axum (read-only REST + observability over a2w-store).
 axum = "0.8"
+# Middleware: API-key gate, body-size limit, request timeout, request-id, trace.
+# `set-header` provides SetResponseHeaderLayer for request-id propagation.
+tower-http = { version = "0.6", features = [
+    "limit",
+    "timeout",
+    "request-id",
+    "trace",
+    "set-header",
+    "util",
+] }
+tower = { version = "0.5", features = ["util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+http = "1"
+http-body = "1"
+# Structured logging — used by both server and engine for run_id-scoped spans.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+# Prometheus metrics — exposed at /metrics from the a2w-server.
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
+# Property-based testing of untrusted parsers.
+proptest = "1"
+# Benchmarks.
+criterion = { version = "0.5", default-features = false }
 
 # Internal crates referenced by path so members can use `.workspace = true`.
 a2w-ir = { path = "crates/a2w-ir" }
@@ -63,3 +91,4 @@ a2w-store = { path = "crates/a2w-store" }
 a2w-import = { path = "crates/a2w-import" }
 a2w-openapi = { path = "crates/a2w-openapi" }
 a2w-server = { path = "crates/a2w-server" }
+a2w-expr = { path = "crates/a2w-expr" }

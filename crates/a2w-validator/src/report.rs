@@ -41,6 +41,11 @@ pub enum FindingCode {
     Cycle,
     /// A node is not reachable from any trigger.
     UnreachableNode,
+    /// A SubWorkflow node references the enclosing workflow by id — a
+    /// self-cycle that would loop until the runtime depth cap fires. The
+    /// validator rejects this at save time so the operator gets a clear
+    /// error before the workflow ever runs.
+    SubWorkflowSelfReference,
 }
 
 /// Where a [`Finding`] applies.

@@ -1,0 +1,35 @@
+[package]
+name = "a2w-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Criterion benchmarks for A2W's hot paths: engine scheduling, validator, expression engine, vault encrypt/decrypt, sqlite save_run."
+
+[dependencies]
+a2w-ir = { workspace = true }
+a2w-validator = { workspace = true }
+a2w-engine = { workspace = true }
+a2w-nodes = { workspace = true }
+a2w-expr = { workspace = true }
+a2w-store = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "engine_bench"
+harness = false
+
+[[bench]]
+name = "validator_bench"
+harness = false
+
+[[bench]]
+name = "expr_bench"
+harness = false
+
+[[bench]]
+name = "vault_bench"
+harness = false
