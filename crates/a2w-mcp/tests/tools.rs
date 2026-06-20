@@ -191,7 +191,11 @@ async fn dry_run_invalid_workflow_is_tool_error_with_report() {
         })
         .await
         .expect_err("invalid workflow must error");
-    assert!(err.message.contains("run failed"), "message: {}", err.message);
+    assert!(
+        err.message.contains("run failed"),
+        "message: {}",
+        err.message
+    );
     // The structured ValidationReport rides along as the error `data`.
     let data = err.data.expect("engine validation report in error data");
     assert_eq!(data["is_valid"], json!(false), "data: {data}");
@@ -225,7 +229,10 @@ async fn run_tests_evaluates_cases() {
         .expect("run tests");
     let arr = results.as_array().unwrap();
     assert_eq!(arr.len(), 2);
-    assert!(arr.iter().all(|r| r["passed"] == json!(true)), "results: {results}");
+    assert!(
+        arr.iter().all(|r| r["passed"] == json!(true)),
+        "results: {results}"
+    );
 }
 
 #[tokio::test]
@@ -259,8 +266,15 @@ async fn optimize_independent_chain_suggests_parallelize() {
         .await
         .expect("optimize");
     let arr = suggestions.as_array().unwrap();
-    let par: Vec<&Value> = arr.iter().filter(|s| s["kind"] == json!("parallelize")).collect();
-    assert_eq!(par.len(), 1, "expected one parallelize suggestion: {suggestions}");
+    let par: Vec<&Value> = arr
+        .iter()
+        .filter(|s| s["kind"] == json!("parallelize"))
+        .collect();
+    assert_eq!(
+        par.len(),
+        1,
+        "expected one parallelize suggestion: {suggestions}"
+    );
     // Without a profile, no estimated gain.
     assert_eq!(par[0]["estimated_gain_ms"], Value::Null);
     // The ops remove a->b and add trigger[0]->b.
@@ -320,8 +334,14 @@ fn apply_ops_rewires_workflow() {
             )
         })
         .collect();
-    assert!(edges.contains(&("trigger".into(), "b".into())), "edges: {edges:?}");
-    assert!(!edges.contains(&("a".into(), "b".into())), "a->b removed: {edges:?}");
+    assert!(
+        edges.contains(&("trigger".into(), "b".into())),
+        "edges: {edges:?}"
+    );
+    assert!(
+        !edges.contains(&("a".into(), "b".into())),
+        "a->b removed: {edges:?}"
+    );
 }
 
 #[test]
@@ -334,7 +354,11 @@ fn apply_ops_rejects_malformed_op() {
             ops,
         })
         .expect_err("unknown op must be a tool error");
-    assert!(err.message.contains("not a valid IrOp"), "message: {}", err.message);
+    assert!(
+        err.message.contains("not a valid IrOp"),
+        "message: {}",
+        err.message
+    );
 }
 
 #[test]
@@ -351,9 +375,15 @@ fn search_templates_finds_slack() {
         "expected the slack template: {hits}"
     );
     // Summaries carry metadata but not the full workflow body.
-    let slack = arr.iter().find(|t| t["id"] == json!("webhook_to_slack")).unwrap();
+    let slack = arr
+        .iter()
+        .find(|t| t["id"] == json!("webhook_to_slack"))
+        .unwrap();
     assert!(slack["tags"].is_array());
-    assert!(slack.get("workflow").is_none(), "summary omits the workflow body");
+    assert!(
+        slack.get("workflow").is_none(),
+        "summary omits the workflow body"
+    );
 }
 
 #[test]
@@ -376,7 +406,11 @@ fn get_template_unknown_id_is_tool_error() {
             id: "does_not_exist".to_string(),
         })
         .expect_err("unknown template must be a tool error");
-    assert!(err.message.contains("no template with id"), "message: {}", err.message);
+    assert!(
+        err.message.contains("no template with id"),
+        "message: {}",
+        err.message
+    );
 }
 
 #[tokio::test]
@@ -404,7 +438,10 @@ async fn generate_logic_with_mock_succeeds() {
         .expect("generate logic should not transport-fail with a mock");
 
     assert_eq!(outcome["success"], json!(true), "outcome: {outcome}");
-    assert!(outcome["workflow"].is_object(), "outcome carries the workflow: {outcome}");
+    assert!(
+        outcome["workflow"].is_object(),
+        "outcome carries the workflow: {outcome}"
+    );
     assert_eq!(
         outcome["iterations"].as_array().unwrap().len(),
         1,
@@ -451,7 +488,11 @@ async fn credential_tools_without_vault_return_invalid_params() {
         .list_credentials_logic()
         .await
         .expect_err("list without vault must error");
-    assert!(err.message.contains("A2W_MASTER_KEY"), "got: {}", err.message);
+    assert!(
+        err.message.contains("A2W_MASTER_KEY"),
+        "got: {}",
+        err.message
+    );
 }
 
 #[tokio::test]

@@ -309,9 +309,7 @@ pub fn validate(wf: &Workflow) -> ValidationReport {
                 findings.push(Finding {
                     severity: Severity::Warning,
                     code: FindingCode::UnreachableNode,
-                    message: format!(
-                        "node '{id}' is not reachable from the trigger '{start}'"
-                    ),
+                    message: format!("node '{id}' is not reachable from the trigger '{start}'"),
                     location: Location::Node(id.to_string()),
                     suggestion: Some(format!(
                         "connect '{id}' to the flow originating at trigger '{start}', \
@@ -330,10 +328,7 @@ pub fn validate(wf: &Workflow) -> ValidationReport {
         if node.kind != a2w_ir::NodeKind::SubWorkflow {
             continue;
         }
-        let workflow_id = node
-            .params
-            .get("workflow_id")
-            .and_then(|v| v.as_str());
+        let workflow_id = node.params.get("workflow_id").and_then(|v| v.as_str());
         if workflow_id == Some(wf.id.as_str()) {
             findings.push(Finding {
                 severity: Severity::Error,
@@ -345,8 +340,7 @@ pub fn validate(wf: &Workflow) -> ValidationReport {
                 ),
                 location: Location::Node(node.id.clone()),
                 suggestion: Some(
-                    "remove the self-reference, or use a distinct workflow_id"
-                        .to_string(),
+                    "remove the self-reference, or use a distinct workflow_id".to_string(),
                 ),
             });
         }
@@ -364,8 +358,7 @@ pub fn validate(wf: &Workflow) -> ValidationReport {
                         ),
                         location: Location::Node(node.id.clone()),
                         suggestion: Some(
-                            "use a distinct id in the inline workflow's `id` field"
-                                .to_string(),
+                            "use a distinct id in the inline workflow's `id` field".to_string(),
                         ),
                     });
                 }
@@ -424,7 +417,10 @@ mod tests {
         let report = validate(&wf(vec![], vec![]));
         assert_eq!(codes(&report), vec![FindingCode::EmptyWorkflow]);
         assert!(!report.is_valid);
-        assert_eq!(finding(&report, FindingCode::EmptyWorkflow).location, Location::Workflow);
+        assert_eq!(
+            finding(&report, FindingCode::EmptyWorkflow).location,
+            Location::Workflow
+        );
     }
 
     #[test]
@@ -439,7 +435,11 @@ mod tests {
         ));
         let f = finding(&report, FindingCode::DuplicateNodeId);
         assert_eq!(f.severity, Severity::Error);
-        assert!(f.message.contains("dup"), "message should mention 'dup': {}", f.message);
+        assert!(
+            f.message.contains("dup"),
+            "message should mention 'dup': {}",
+            f.message
+        );
         assert_eq!(f.location, Location::Node("dup".to_string()));
         assert!(!report.is_valid);
     }
@@ -489,7 +489,11 @@ mod tests {
         ));
         let f = finding(&report, FindingCode::DanglingConnectionSource);
         assert_eq!(f.severity, Severity::Error);
-        assert!(f.message.contains("ghost"), "message should mention 'ghost': {}", f.message);
+        assert!(
+            f.message.contains("ghost"),
+            "message should mention 'ghost': {}",
+            f.message
+        );
         assert!(!report.is_valid);
     }
 
@@ -501,7 +505,11 @@ mod tests {
         ));
         let f = finding(&report, FindingCode::DanglingConnectionTarget);
         assert_eq!(f.severity, Severity::Error);
-        assert!(f.message.contains("ghost"), "message should mention 'ghost': {}", f.message);
+        assert!(
+            f.message.contains("ghost"),
+            "message should mention 'ghost': {}",
+            f.message
+        );
         assert!(!report.is_valid);
     }
 
@@ -521,7 +529,11 @@ mod tests {
         ));
         let f = finding(&report, FindingCode::InvalidOutputPort);
         assert_eq!(f.severity, Severity::Error);
-        assert!(f.message.contains("br"), "message should mention 'br': {}", f.message);
+        assert!(
+            f.message.contains("br"),
+            "message should mention 'br': {}",
+            f.message
+        );
         assert!(!report.is_valid);
     }
 
@@ -585,7 +597,11 @@ mod tests {
         ));
         let f = finding(&report, FindingCode::UnreachableNode);
         assert_eq!(f.severity, Severity::Warning);
-        assert!(f.message.contains("island"), "message should mention 'island': {}", f.message);
+        assert!(
+            f.message.contains("island"),
+            "message should mention 'island': {}",
+            f.message
+        );
         assert_eq!(f.location, Location::Node("island".to_string()));
         // Warnings do not invalidate the workflow.
         assert!(report.is_valid);

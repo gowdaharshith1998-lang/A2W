@@ -93,8 +93,8 @@ fn translate_segment(inner: &str) -> Option<String> {
     // digits, whitespace. Reject anything that looks like a function call,
     // operator, or another `$`-reference embedded in the expression.
     for ch in after.chars() {
-        let ok = ch.is_alphanumeric()
-            || matches!(ch, '.' | '[' | ']' | '"' | '\'' | '_' | ' ' | '\t');
+        let ok =
+            ch.is_alphanumeric() || matches!(ch, '.' | '[' | ']' | '"' | '\'' | '_' | ' ' | '\t');
         if !ok {
             return None;
         }

@@ -349,8 +349,9 @@ impl McpInvoker for RmcpInvoker {
             cmd.env(k, v);
         }
 
-        let transport = TokioChildProcess::new(cmd)
-            .map_err(|e| McpError::Connect(format!("failed to spawn MCP server '{command}': {e}")))?;
+        let transport = TokioChildProcess::new(cmd).map_err(|e| {
+            McpError::Connect(format!("failed to spawn MCP server '{command}': {e}"))
+        })?;
 
         // `()` is the unit client handler; `serve` performs the initialize
         // handshake and yields a RunningService that derefs to the client peer.
@@ -393,7 +394,9 @@ impl McpInvoker for RmcpInvoker {
                 .map(|v| v.to_string())
                 .or_else(|| text_of(&result))
                 .unwrap_or_else(|| "tool reported an error".to_string());
-            return Err(McpError::Call(format!("tool '{tool}' returned an error: {detail}")));
+            return Err(McpError::Call(format!(
+                "tool '{tool}' returned an error: {detail}"
+            )));
         }
 
         // Prefer the structured content; fall back to concatenated text content;
@@ -463,13 +466,18 @@ impl McpToolCall {
             .get("tool")
             .and_then(serde_json::Value::as_str)
             .filter(|t| !t.is_empty())
-            .ok_or_else(|| NodeError::BadParams("McpToolCall requires a non-empty string `tool`".into()))
+            .ok_or_else(|| {
+                NodeError::BadParams("McpToolCall requires a non-empty string `tool`".into())
+            })
     }
 
     /// Parse the `server` spec from params, mapping a bad spec to
     /// [`NodeError::BadParams`].
     fn server(params: &serde_json::Value) -> Result<McpServerSpec, NodeError> {
-        let raw = params.get("server").cloned().unwrap_or(serde_json::Value::Null);
+        let raw = params
+            .get("server")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         McpServerSpec::from_params(&raw).map_err(|e| NodeError::BadParams(e.to_string()))
     }
 
@@ -599,10 +607,10 @@ mod tests {
             params,
             mode,
             credentials: None,
-        sub_workflows: None,
-        sub_workflow_depth: 0,
-        workflow_id: None,
-        approvals: None,
+            sub_workflows: None,
+            sub_workflow_depth: 0,
+            workflow_id: None,
+            approvals: None,
         }
     }
 
@@ -668,14 +676,23 @@ mod tests {
             }),
             ExecutionMode::Run,
         );
-        let input = vec![Item::root(serde_json::json!({})), Item::root(serde_json::json!({}))];
+        let input = vec![
+            Item::root(serde_json::json!({})),
+            Item::root(serde_json::json!({})),
+        ];
         let out = node.execute(&ctx, input).await.expect("execute ok");
         assert_eq!(out.len(), 2, "one item per input item");
         for item in &out {
             assert_eq!(item.json["tool"], serde_json::json!("do"));
             assert_eq!(item.json["result"]["echoed_tool"], serde_json::json!("do"));
-            assert_eq!(item.json["result"]["echoed_args"], serde_json::json!({ "a": 1 }));
-            assert_eq!(item.json["result"]["canned"], serde_json::json!({ "ok": 1 }));
+            assert_eq!(
+                item.json["result"]["echoed_args"],
+                serde_json::json!({ "a": 1 })
+            );
+            assert_eq!(
+                item.json["result"]["canned"],
+                serde_json::json!({ "ok": 1 })
+            );
         }
     }
 
@@ -759,8 +776,14 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].json["_mock"], serde_json::json!(true));
         assert_eq!(out[0].json["tool"], serde_json::json!("do"));
-        assert_eq!(out[0].json["server"]["transport"], serde_json::json!("stdio"));
-        assert_eq!(out[0].json["server"]["command"], serde_json::json!("a2w-mcp"));
+        assert_eq!(
+            out[0].json["server"]["transport"],
+            serde_json::json!("stdio")
+        );
+        assert_eq!(
+            out[0].json["server"]["command"],
+            serde_json::json!("a2w-mcp")
+        );
     }
 
     #[tokio::test]

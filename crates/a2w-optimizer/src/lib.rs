@@ -297,11 +297,9 @@ mod tests {
             ],
         };
         let prof = profile(&wf, &result);
-        assert!(prof
-            .flagged
-            .iter()
-            .any(|f| f.kind == InefficiencyKind::ZeroOutput
-                && f.node_id.as_deref() == Some("dead")));
+        assert!(prof.flagged.iter().any(
+            |f| f.kind == InefficiencyKind::ZeroOutput && f.node_id.as_deref() == Some("dead")
+        ));
 
         // 'dead' has zero output and no outgoing edges → RemoveDeadNode.
         let suggestions = analyze(&wf, Some(&prof));

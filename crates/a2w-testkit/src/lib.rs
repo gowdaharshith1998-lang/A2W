@@ -99,9 +99,7 @@ pub async fn run_tests(
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
         let log = MemoryEventLog::new();
-        let outcome = engine
-            .run(wf, case.trigger_input.clone(), mode, &log)
-            .await;
+        let outcome = engine.run(wf, case.trigger_input.clone(), mode, &log).await;
         results.push(evaluate(case, &outcome));
     }
     results
@@ -127,9 +125,7 @@ fn evaluate(case: &TestCase, outcome: &Result<RunResult, a2w_engine::EngineError
         ),
 
         // --- Fails --------------------------------------------------------
-        (Expectation::Fails, Err(err)) => {
-            (true, format!("run failed as expected: {err}"))
-        }
+        (Expectation::Fails, Err(err)) => (true, format!("run failed as expected: {err}")),
         (Expectation::Fails, Ok(run)) if run.status == RunStatus::Failed => {
             (true, "run reached status Failed as expected".to_string())
         }
@@ -147,9 +143,7 @@ fn evaluate(case: &TestCase, outcome: &Result<RunResult, a2w_engine::EngineError
         }
         (Expectation::NodeOutputEquals { node_id, .. }, Err(err)) => (
             false,
-            format!(
-                "expected node '{node_id}' to produce output, but the run errored: {err}"
-            ),
+            format!("expected node '{node_id}' to produce output, but the run errored: {err}"),
         ),
 
         // --- NodeOutputContains ------------------------------------------
@@ -158,9 +152,7 @@ fn evaluate(case: &TestCase, outcome: &Result<RunResult, a2w_engine::EngineError
         }
         (Expectation::NodeOutputContains { node_id, .. }, Err(err)) => (
             false,
-            format!(
-                "expected node '{node_id}' to produce output, but the run errored: {err}"
-            ),
+            format!("expected node '{node_id}' to produce output, but the run errored: {err}"),
         ),
     };
 
@@ -187,15 +179,13 @@ fn eval_node_output_equals(node_id: &str, expected: &[Value], run: &RunResult) -
 
     let actual: Vec<&Value> = items.iter().map(|item| &item.json).collect();
 
-    if actual.len() == expected.len()
-        && actual
-            .iter()
-            .zip(expected.iter())
-            .all(|(a, e)| *a == e)
-    {
+    if actual.len() == expected.len() && actual.iter().zip(expected.iter()).all(|(a, e)| *a == e) {
         return (
             true,
-            format!("node '{node_id}' output matched ({} item(s))", expected.len()),
+            format!(
+                "node '{node_id}' output matched ({} item(s))",
+                expected.len()
+            ),
         );
     }
 
@@ -351,11 +341,27 @@ mod tests {
         let results = run_tests(&engine(), &wf, &cases, ExecutionMode::Run).await;
         assert!(!results[0].passed);
         // The detail must surface both sides of the mismatch.
-        assert!(results[0].detail.contains("mismatch"), "{}", results[0].detail);
-        assert!(results[0].detail.contains("expected"), "{}", results[0].detail);
-        assert!(results[0].detail.contains("actual"), "{}", results[0].detail);
+        assert!(
+            results[0].detail.contains("mismatch"),
+            "{}",
+            results[0].detail
+        );
+        assert!(
+            results[0].detail.contains("expected"),
+            "{}",
+            results[0].detail
+        );
+        assert!(
+            results[0].detail.contains("actual"),
+            "{}",
+            results[0].detail
+        );
         assert!(results[0].detail.contains("999"), "{}", results[0].detail);
-        assert!(results[0].detail.contains("\"tag\":\"x\""), "{}", results[0].detail);
+        assert!(
+            results[0].detail.contains("\"tag\":\"x\""),
+            "{}",
+            results[0].detail
+        );
     }
 
     #[tokio::test]
@@ -375,7 +381,11 @@ mod tests {
         }];
         let results = run_tests(&engine(), &bad, &cases, ExecutionMode::Run).await;
         assert!(results[0].passed, "detail: {}", results[0].detail);
-        assert!(results[0].detail.contains("failed as expected"), "{}", results[0].detail);
+        assert!(
+            results[0].detail.contains("failed as expected"),
+            "{}",
+            results[0].detail
+        );
     }
 
     #[test]
@@ -405,6 +415,9 @@ mod tests {
         let s = serde_json::to_string(&case).expect("serialize");
         let back: TestCase = serde_json::from_str(&s).expect("deserialize");
         assert_eq!(back.name, case.name);
-        assert!(matches!(back.expect, Expectation::NodeOutputContains { .. }));
+        assert!(matches!(
+            back.expect,
+            Expectation::NodeOutputContains { .. }
+        ));
     }
 }

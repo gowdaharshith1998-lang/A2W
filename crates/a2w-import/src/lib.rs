@@ -108,9 +108,9 @@ pub struct ImportResult {
 pub fn import_n8n(json: &str) -> Result<ImportResult, ImportError> {
     let root: Value = serde_json::from_str(json)?;
 
-    let obj = root
-        .as_object()
-        .ok_or_else(|| ImportError::Malformed("top-level value is not a JSON object".to_string()))?;
+    let obj = root.as_object().ok_or_else(|| {
+        ImportError::Malformed("top-level value is not a JSON object".to_string())
+    })?;
 
     let nodes_json = obj
         .get("nodes")
@@ -343,7 +343,10 @@ mod tests {
 
         // http_request params carried url + method.
         let http = node_by_id(wf, "http_request");
-        assert_eq!(http.params["url"], serde_json::json!("https://example.com/api"));
+        assert_eq!(
+            http.params["url"],
+            serde_json::json!("https://example.com/api")
+        );
         assert_eq!(http.params["method"], serde_json::json!("POST"));
 
         // set params extracted the assignment.
@@ -366,7 +369,11 @@ mod tests {
             result.warnings
         );
         let report = a2w_validator::validate(wf);
-        assert!(report.is_valid, "expected valid workflow: {:?}", report.findings);
+        assert!(
+            report.is_valid,
+            "expected valid workflow: {:?}",
+            report.findings
+        );
     }
 
     /// Test 2: an unknown node type becomes a flagged `transform` passthrough.
@@ -554,7 +561,10 @@ mod tests {
 
     #[test]
     fn invalid_json_errors() {
-        assert!(matches!(import_n8n("{ not json"), Err(ImportError::Json(_))));
+        assert!(matches!(
+            import_n8n("{ not json"),
+            Err(ImportError::Json(_))
+        ));
     }
 
     #[test]

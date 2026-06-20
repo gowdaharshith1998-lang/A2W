@@ -158,7 +158,14 @@ fn parallel_fan_out() -> Template {
         "Parallel fan-out then merge",
         "On a webhook, fetch two independent API resources in parallel branches \
          and merge their results back into a single stream.",
-        &["parallel", "fan-out", "merge", "http", "concurrency", "webhook"],
+        &[
+            "parallel",
+            "fan-out",
+            "merge",
+            "http",
+            "concurrency",
+            "webhook",
+        ],
         vec![
             node("trigger", NodeKind::WebhookTrigger, json!({})),
             node(
@@ -211,7 +218,14 @@ fn enrichment_pipeline() -> Template {
         "Receive a webhook, look up the entity by id, enrich the item with a \
          derived status field, then forward the enriched record to a downstream \
          service.",
-        &["enrichment", "pipeline", "http", "transform", "webhook", "etl"],
+        &[
+            "enrichment",
+            "pipeline",
+            "http",
+            "transform",
+            "webhook",
+            "etl",
+        ],
         vec![
             node("trigger", NodeKind::WebhookTrigger, json!({})),
             node(
@@ -253,7 +267,14 @@ fn scheduled_sync() -> Template {
         "Scheduled cross-system sync",
         "On a daily schedule, read records from a source API, normalize them, \
          and POST the normalized batch to a destination API.",
-        &["schedule", "cron", "sync", "http", "transform", "integration"],
+        &[
+            "schedule",
+            "cron",
+            "sync",
+            "http",
+            "transform",
+            "integration",
+        ],
         vec![
             node(
                 "daily",
@@ -310,10 +331,7 @@ pub fn all() -> Vec<Template> {
 /// whitespace-only) query matches nothing.
 #[must_use]
 pub fn search(query: &str) -> Vec<Template> {
-    let words: Vec<String> = query
-        .split_whitespace()
-        .map(str::to_lowercase)
-        .collect();
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     if words.is_empty() {
         return Vec::new();
     }
@@ -343,7 +361,11 @@ mod tests {
 
     #[test]
     fn all_has_at_least_six_templates() {
-        assert!(all().len() >= 6, "expected >= 6 templates, got {}", all().len());
+        assert!(
+            all().len() >= 6,
+            "expected >= 6 templates, got {}",
+            all().len()
+        );
     }
 
     #[test]

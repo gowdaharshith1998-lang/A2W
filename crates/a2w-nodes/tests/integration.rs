@@ -54,7 +54,8 @@ async fn dry_run_sample_workflow_shape() {
     // carries a `set` param (the library sample's params are empty).
     let trigger = Node::new("trigger", NodeKind::WebhookTrigger);
     let mut fetch = Node::new("fetch", NodeKind::HttpRequest);
-    fetch.params = serde_json::json!({ "method": "GET", "url": "https://example.com/{{json.hello}}" });
+    fetch.params =
+        serde_json::json!({ "method": "GET", "url": "https://example.com/{{json.hello}}" });
     let shape = transform_set("shape", serde_json::json!({ "shaped": true }));
 
     let workflow = wf(
@@ -168,7 +169,10 @@ async fn parallel_branches_fan_in() {
     // Lineage is preserved/re-stamped to the merge node.
     for (idx, item) in merged.iter().enumerate() {
         match &item.source {
-            ItemSource::Produced { node_id, item_index } => {
+            ItemSource::Produced {
+                node_id,
+                item_index,
+            } => {
                 assert_eq!(node_id, "merge");
                 assert_eq!(*item_index, idx);
             }
@@ -201,7 +205,10 @@ async fn on_error_continue_completes() {
     // Register AlwaysFail for the HttpRequest kind so a failing node is wired in
     // deterministically without touching the network.
     let registry = NodeRegistry::new()
-        .with(NodeKind::WebhookTrigger, Arc::new(a2w_nodes::WebhookTrigger))
+        .with(
+            NodeKind::WebhookTrigger,
+            Arc::new(a2w_nodes::WebhookTrigger),
+        )
         .with(NodeKind::HttpRequest, Arc::new(AlwaysFail))
         .with(NodeKind::Transform, Arc::new(a2w_nodes::Transform));
 
@@ -360,7 +367,10 @@ impl McpInvoker for CannedInvoker {
 /// trigger needed to seed a run).
 fn registry_with_invoker(node: McpToolCall) -> NodeRegistry {
     NodeRegistry::new()
-        .with(NodeKind::WebhookTrigger, Arc::new(a2w_nodes::WebhookTrigger))
+        .with(
+            NodeKind::WebhookTrigger,
+            Arc::new(a2w_nodes::WebhookTrigger),
+        )
         .with(NodeKind::McpToolCall, Arc::new(node))
 }
 
@@ -384,7 +394,10 @@ async fn mcp_tool_call_real_run_carries_canned_result() {
 
     // webhook_trigger -> mcp_tool_call
     let workflow = wf(
-        vec![Node::new("trigger", NodeKind::WebhookTrigger), mcp_node("call")],
+        vec![
+            Node::new("trigger", NodeKind::WebhookTrigger),
+            mcp_node("call"),
+        ],
         vec![Connection::new("trigger", 0, "call")],
     );
 
@@ -402,7 +415,10 @@ async fn mcp_tool_call_real_run_carries_canned_result() {
 
     assert_eq!(result.status, RunStatus::Completed);
 
-    let out = result.node_outputs.get("call").expect("call output present");
+    let out = result
+        .node_outputs
+        .get("call")
+        .expect("call output present");
     assert_eq!(out.len(), 1, "one output item per trigger item");
     assert_eq!(out[0].json["tool"], serde_json::json!("do"));
     assert_eq!(out[0].json["result"], serde_json::json!({ "answer": 42 }));
@@ -460,7 +476,10 @@ async fn mcp_tool_call_missing_tool_surfaces_bad_params_cleanly() {
 async fn mcp_tool_call_dry_run_is_mocked_and_does_not_invoke() {
     // default() uses the real RmcpInvoker; a dry run must NOT spawn anything.
     let workflow = wf(
-        vec![Node::new("trigger", NodeKind::WebhookTrigger), mcp_node("call")],
+        vec![
+            Node::new("trigger", NodeKind::WebhookTrigger),
+            mcp_node("call"),
+        ],
         vec![Connection::new("trigger", 0, "call")],
     );
 
@@ -477,7 +496,10 @@ async fn mcp_tool_call_dry_run_is_mocked_and_does_not_invoke() {
         .expect("dry run should succeed without contacting a server");
 
     assert_eq!(result.status, RunStatus::Completed);
-    let out = result.node_outputs.get("call").expect("call output present");
+    let out = result
+        .node_outputs
+        .get("call")
+        .expect("call output present");
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].json["_mock"], serde_json::json!(true));
     assert_eq!(out[0].json["tool"], serde_json::json!("do"));
@@ -551,7 +573,10 @@ impl WasmRunner for CannedRunner {
     fn run(&self, _wasm: &[u8], function: &str, input: &[u8]) -> Result<Vec<u8>, CodeError> {
         // Prove the requested function and the serialised input reach the runner.
         assert_eq!(function, "transform");
-        assert_eq!(input, serde_json::to_vec(&serde_json::json!({ "seed": true })).unwrap());
+        assert_eq!(
+            input,
+            serde_json::to_vec(&serde_json::json!({ "seed": true })).unwrap()
+        );
         Ok(self.bytes.clone())
     }
 }
@@ -559,7 +584,10 @@ impl WasmRunner for CannedRunner {
 /// A registry wiring `CodeStep` to the given runner (plus the trigger).
 fn registry_with_runner(node: CodeStep) -> NodeRegistry {
     NodeRegistry::new()
-        .with(NodeKind::WebhookTrigger, Arc::new(a2w_nodes::WebhookTrigger))
+        .with(
+            NodeKind::WebhookTrigger,
+            Arc::new(a2w_nodes::WebhookTrigger),
+        )
         .with(NodeKind::CodeStep, Arc::new(node))
 }
 
@@ -586,7 +614,10 @@ async fn code_step_real_run_carries_parsed_wasm_output() {
 
     // webhook_trigger -> code_step
     let workflow = wf(
-        vec![Node::new("trigger", NodeKind::WebhookTrigger), code_node("code")],
+        vec![
+            Node::new("trigger", NodeKind::WebhookTrigger),
+            code_node("code"),
+        ],
         vec![Connection::new("trigger", 0, "code")],
     );
 
@@ -604,7 +635,10 @@ async fn code_step_real_run_carries_parsed_wasm_output() {
 
     assert_eq!(result.status, RunStatus::Completed);
 
-    let out = result.node_outputs.get("code").expect("code output present");
+    let out = result
+        .node_outputs
+        .get("code")
+        .expect("code output present");
     assert_eq!(out.len(), 1, "one output item per trigger item");
     // The parsed mock JSON is carried through as the item payload.
     assert_eq!(out[0].json, serde_json::json!({ "shaped": true, "n": 42 }));
@@ -633,7 +667,12 @@ async fn code_step_missing_wasm_surfaces_bad_params_cleanly() {
     let engine = Engine::new(registry_with_runner(node));
     let log = MemoryEventLog::new();
     let err = engine
-        .run(&workflow, vec![serde_json::json!({})], ExecutionMode::Run, &log)
+        .run(
+            &workflow,
+            vec![serde_json::json!({})],
+            ExecutionMode::Run,
+            &log,
+        )
         .await
         .expect_err("missing wasm should fail the run");
 
@@ -654,19 +693,30 @@ async fn code_step_missing_wasm_surfaces_bad_params_cleanly() {
 async fn code_step_dry_run_is_mocked_and_does_not_run_wasm() {
     // default() uses the real ExtismRunner; a dry run must NOT load or run wasm.
     let workflow = wf(
-        vec![Node::new("trigger", NodeKind::WebhookTrigger), code_node("code")],
+        vec![
+            Node::new("trigger", NodeKind::WebhookTrigger),
+            code_node("code"),
+        ],
         vec![Connection::new("trigger", 0, "code")],
     );
 
     let engine = Engine::new(default_registry());
     let log = MemoryEventLog::new();
     let result = engine
-        .run(&workflow, vec![serde_json::json!({})], ExecutionMode::DryRun, &log)
+        .run(
+            &workflow,
+            vec![serde_json::json!({})],
+            ExecutionMode::DryRun,
+            &log,
+        )
         .await
         .expect("dry run should succeed without running wasm");
 
     assert_eq!(result.status, RunStatus::Completed);
-    let out = result.node_outputs.get("code").expect("code output present");
+    let out = result
+        .node_outputs
+        .get("code")
+        .expect("code output present");
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].json["_mock"], serde_json::json!(true));
     assert_eq!(out[0].json["code_step"], serde_json::json!(true));

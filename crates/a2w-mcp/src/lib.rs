@@ -374,11 +374,7 @@ impl A2wServer {
 
     /// Construct a server with a vault **and** an explicit [`McpPolicy`].
     #[must_use]
-    pub fn with_vault_and_policy(
-        store: Arc<Store>,
-        vault: Arc<Vault>,
-        policy: McpPolicy,
-    ) -> Self {
+    pub fn with_vault_and_policy(store: Arc<Store>, vault: Arc<Vault>, policy: McpPolicy) -> Self {
         let resolver = Arc::new(StoreCredentialResolver::new(
             Arc::clone(&store),
             Arc::clone(&vault),
@@ -514,10 +510,7 @@ impl A2wServer {
         // again.
         if let Some(store) = self.store.as_ref() {
             if let Err(e) = store.save_run(&wf.id, &result).await {
-                eprintln!(
-                    "a2w-mcp: save_run failed for run {}: {e}",
-                    result.run_id
-                );
+                eprintln!("a2w-mcp: save_run failed for run {}: {e}", result.run_id);
             }
         }
 
@@ -602,10 +595,7 @@ impl A2wServer {
     /// # Errors
     /// Internal error only on the (practically impossible) serialization
     /// failure of the result array.
-    pub fn search_templates_logic(
-        &self,
-        input: SearchTemplatesInput,
-    ) -> Result<Value, ErrorData> {
+    pub fn search_templates_logic(&self, input: SearchTemplatesInput) -> Result<Value, ErrorData> {
         let hits: Vec<Value> = a2w_templates::search(&input.query)
             .into_iter()
             .map(|t| {
@@ -659,16 +649,16 @@ impl A2wServer {
             return Err(ErrorData::invalid_params("`name` must be non-empty", None));
         }
         if input.secret.is_empty() {
-            return Err(ErrorData::invalid_params("`secret` must be non-empty", None));
+            return Err(ErrorData::invalid_params(
+                "`secret` must be non-empty",
+                None,
+            ));
         }
         vault
             .store_secret(store, &input.id, &input.name, &input.secret)
             .await
             .map_err(|e| {
-                ErrorData::internal_error(
-                    format!("credential write failed: {e}"),
-                    None,
-                )
+                ErrorData::internal_error(format!("credential write failed: {e}"), None)
             })?;
         Ok(json!({ "saved": input.id }))
     }
@@ -680,9 +670,9 @@ impl A2wServer {
     /// [`ErrorData::internal_error`] on a store read failure.
     pub async fn list_credentials_logic(&self) -> Result<Value, ErrorData> {
         let (store, _vault) = self.require_vault()?;
-        let rows = Vault::list_credentials(store).await.map_err(|e| {
-            ErrorData::internal_error(format!("credential list failed: {e}"), None)
-        })?;
+        let rows = Vault::list_credentials(store)
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("credential list failed: {e}"), None))?;
         let summaries: Vec<Value> = rows
             .into_iter()
             .map(|(id, name, created_at)| {
@@ -706,9 +696,11 @@ impl A2wServer {
             "wf_delete_credential",
         )?;
         let (store, _vault) = self.require_vault()?;
-        Vault::delete_credential(store, &input.id).await.map_err(|e| {
-            ErrorData::internal_error(format!("credential delete failed: {e}"), None)
-        })?;
+        Vault::delete_credential(store, &input.id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(format!("credential delete failed: {e}"), None)
+            })?;
         Ok(json!({ "deleted": input.id }))
     }
 
@@ -736,9 +728,7 @@ impl A2wServer {
         let cfg = AuthorConfig { max_repairs };
         let outcome = generate_workflow_from_prompt(prompt, llm, &cfg)
             .await
-            .map_err(|e| {
-                ErrorData::internal_error(format!("LLM transport failed: {e}"), None)
-            })?;
+            .map_err(|e| ErrorData::internal_error(format!("LLM transport failed: {e}"), None))?;
         serde_json::to_value(outcome).map_err(internal)
     }
 }
@@ -967,7 +957,9 @@ impl A2wServer {
             )
         })?;
         let max_repairs = input.max_repairs.unwrap_or(3);
-        ok(self.generate_logic(&input.prompt, max_repairs, &client).await?)
+        ok(self
+            .generate_logic(&input.prompt, max_repairs, &client)
+            .await?)
     }
 }
 
@@ -1016,7 +1008,10 @@ fn parse_tests(values: Vec<Value>) -> Result<Vec<TestCase>, ErrorData> {
         .enumerate()
         .map(|(i, v)| {
             serde_json::from_value(v).map_err(|e| {
-                ErrorData::invalid_params(format!("`tests[{i}]` is not a valid TestCase: {e}"), None)
+                ErrorData::invalid_params(
+                    format!("`tests[{i}]` is not a valid TestCase: {e}"),
+                    None,
+                )
             })
         })
         .collect()

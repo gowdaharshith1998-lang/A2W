@@ -163,16 +163,19 @@ pub fn app_with_config_and_metrics(
     // is `ResponseBody<_>`, which is not `Default`, but axum's `Body` is.
     let middleware = ServiceBuilder::new()
         .layer(SetRequestIdLayer::new(
-            REQUEST_ID_HEADER.parse().expect("static header name parses"),
+            REQUEST_ID_HEADER
+                .parse()
+                .expect("static header name parses"),
             MakeRequestUuid,
         ))
         .layer(
-            TraceLayer::new_for_http().make_span_with(
-                tower_http::trace::DefaultMakeSpan::new().include_headers(false),
-            ),
+            TraceLayer::new_for_http()
+                .make_span_with(tower_http::trace::DefaultMakeSpan::new().include_headers(false)),
         )
         .layer(PropagateRequestIdLayer::new(
-            REQUEST_ID_HEADER.parse().expect("static header name parses"),
+            REQUEST_ID_HEADER
+                .parse()
+                .expect("static header name parses"),
         ))
         .layer(RequestBodyLimitLayer::new(cfg.max_body_bytes))
         .layer(TimeoutLayer::with_status_code(
@@ -192,7 +195,10 @@ pub fn app_with_config_and_metrics(
                 .delete(handlers::delete_workflow),
         )
         .route("/workflows/{id}/runs", get(handlers::list_runs))
-        .route("/workflows/{id}/validate", post(handlers::validate_workflow))
+        .route(
+            "/workflows/{id}/validate",
+            post(handlers::validate_workflow),
+        )
         .route("/workflows/{id}/dry_run", post(handlers::dry_run))
         .route("/workflows/{id}/run", post(handlers::run_workflow))
         .route("/runs/{run_id}/resume", post(handlers::resume_run))
@@ -285,7 +291,9 @@ mod tests {
             .method(method)
             .uri(path)
             .header("content-type", "application/json")
-            .body(Body::from(serde_json::to_vec(body).expect("serialize body")))
+            .body(Body::from(
+                serde_json::to_vec(body).expect("serialize body"),
+            ))
             .expect("build JSON request")
     }
 
@@ -557,7 +565,11 @@ mod tests {
             ))
             .await
             .expect("post response");
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "empty name rejected");
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "empty name rejected"
+        );
 
         let resp = app
             .oneshot(json_req(
@@ -567,7 +579,11 @@ mod tests {
             ))
             .await
             .expect("post response");
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "empty secret rejected");
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "empty secret rejected"
+        );
     }
 
     #[tokio::test]
@@ -579,9 +595,11 @@ mod tests {
         // resolve params. Real `Run` would actually hit the network here; for
         // the test we mark the http node as transform-only by removing it.
         wf.nodes.retain(|n| n.kind != a2w_ir::NodeKind::HttpRequest);
-        wf.connections.retain(|c| c.from_node != "fetch" && c.to_node != "fetch");
+        wf.connections
+            .retain(|c| c.from_node != "fetch" && c.to_node != "fetch");
         // Reconnect trigger -> shape directly.
-        wf.connections.push(a2w_ir::Connection::new("trigger", 0, "shape"));
+        wf.connections
+            .push(a2w_ir::Connection::new("trigger", 0, "shape"));
 
         let wf_json = serde_json::to_value(&wf).expect("wf to json");
         let resp = app
@@ -622,8 +640,10 @@ mod tests {
 
         let mut wf = a2w_ir::sample_workflow();
         wf.nodes.retain(|n| n.kind != a2w_ir::NodeKind::HttpRequest);
-        wf.connections.retain(|c| c.from_node != "fetch" && c.to_node != "fetch");
-        wf.connections.push(a2w_ir::Connection::new("trigger", 0, "shape"));
+        wf.connections
+            .retain(|c| c.from_node != "fetch" && c.to_node != "fetch");
+        wf.connections
+            .push(a2w_ir::Connection::new("trigger", 0, "shape"));
         let wf_json = serde_json::to_value(&wf).expect("wf to json");
 
         app.clone()

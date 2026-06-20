@@ -63,9 +63,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if cfg.auth.is_enforced() {
         tracing::info!("API-key auth ENFORCED (A2W_API_KEY)");
     } else {
-        tracing::warn!(
-            "API-key auth DISABLED (A2W_API_KEY not set); every request is permitted"
-        );
+        tracing::warn!("API-key auth DISABLED (A2W_API_KEY not set); every request is permitted");
     }
     tracing::info!(
         max_body_bytes = cfg.max_body_bytes,

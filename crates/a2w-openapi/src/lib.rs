@@ -156,9 +156,9 @@ pub struct GenerateResult {
 pub fn generate(spec_json: &str) -> Result<GenerateResult, OpenApiError> {
     let root: Value = serde_json::from_str(spec_json)?;
 
-    let root_obj = root
-        .as_object()
-        .ok_or_else(|| OpenApiError::Malformed("top-level value is not a JSON object".to_string()))?;
+    let root_obj = root.as_object().ok_or_else(|| {
+        OpenApiError::Malformed("top-level value is not a JSON object".to_string())
+    })?;
 
     // `paths` is mandatory: without it there is nothing to expose.
     let paths = root_obj
@@ -212,9 +212,7 @@ pub fn generate(spec_json: &str) -> Result<GenerateResult, OpenApiError> {
 
     for (path, path_item) in paths {
         let Some(path_obj) = path_item.as_object() else {
-            warnings.push(format!(
-                "path '{path}' is not an object; skipped"
-            ));
+            warnings.push(format!("path '{path}' is not an object; skipped"));
             continue;
         };
 
@@ -835,7 +833,10 @@ mod tests {
         "#;
         let res = generate(spec).expect("generates");
         let q = action(&res, "q");
-        assert_eq!(q.input_schema["properties"]["term"]["type"], json!("string"));
+        assert_eq!(
+            q.input_schema["properties"]["term"]["type"],
+            json!("string")
+        );
         assert_eq!(q.input_schema["properties"]["term"]["x-in"], json!("query"));
     }
 

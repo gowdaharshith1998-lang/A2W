@@ -92,9 +92,7 @@ impl Vault {
         // bytes and the temporary key array.
         let raw = Zeroizing::new(raw);
         let trimmed = raw.trim();
-        let mut bytes = Zeroizing::new(
-            base64::engine::general_purpose::STANDARD.decode(trimmed)?,
-        );
+        let mut bytes = Zeroizing::new(base64::engine::general_purpose::STANDARD.decode(trimmed)?);
 
         if bytes.len() != KEY_LEN {
             let n = bytes.len();
@@ -139,14 +137,11 @@ impl Vault {
     ///
     /// # Errors
     /// [`StoreError::Sqlx`] on a read failure.
-    pub async fn list_credentials(
-        store: &Store,
-    ) -> Result<Vec<(String, String, i64)>, StoreError> {
-        let rows: Vec<(String, String, i64)> = sqlx::query_as(
-            "SELECT id, name, created_at FROM credentials ORDER BY id",
-        )
-        .fetch_all(&store.pool)
-        .await?;
+    pub async fn list_credentials(store: &Store) -> Result<Vec<(String, String, i64)>, StoreError> {
+        let rows: Vec<(String, String, i64)> =
+            sqlx::query_as("SELECT id, name, created_at FROM credentials ORDER BY id")
+                .fetch_all(&store.pool)
+                .await?;
         Ok(rows)
     }
 
@@ -251,9 +246,9 @@ impl Vault {
 
         let cipher = Aes256Gcm::new(self.key_ref());
         let nonce = Nonce::<<Aes256Gcm as AeadCore>::NonceSize>::from(nonce_arr);
-        let plaintext = cipher
-            .decrypt(&nonce, ciphertext.as_slice())
-            .map_err(|_| StoreError::Crypto("decryption failed (wrong key or tampered data)".to_string()))?;
+        let plaintext = cipher.decrypt(&nonce, ciphertext.as_slice()).map_err(|_| {
+            StoreError::Crypto("decryption failed (wrong key or tampered data)".to_string())
+        })?;
 
         let text = String::from_utf8(plaintext)
             .map_err(|e| StoreError::Crypto(format!("decrypted bytes are not valid UTF-8: {e}")))?;

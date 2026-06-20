@@ -52,7 +52,11 @@ impl NodeExecutor for Loop {
         let spec = Self::parse(&ctx.params)?;
         let mut out = Vec::new();
         for item in input {
-            let pointer = if spec.over.is_empty() { "/" } else { &spec.over };
+            let pointer = if spec.over.is_empty() {
+                "/"
+            } else {
+                &spec.over
+            };
             let resolved = if pointer == "/" {
                 Some(&item.json)
             } else {
@@ -115,10 +119,10 @@ mod tests {
             params,
             mode: ExecutionMode::Run,
             credentials: None,
-        sub_workflows: None,
-        sub_workflow_depth: 0,
-        workflow_id: None,
-        approvals: None,
+            sub_workflows: None,
+            sub_workflow_depth: 0,
+            workflow_id: None,
+            approvals: None,
         }
     }
 

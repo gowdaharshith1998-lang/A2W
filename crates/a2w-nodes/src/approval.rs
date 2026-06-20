@@ -22,9 +22,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use a2w_engine::{
-    ApprovalOutcome, ExecutionMode, Item, NodeContext, NodeError, NodeExecutor,
-};
+use a2w_engine::{ApprovalOutcome, ExecutionMode, Item, NodeContext, NodeError, NodeExecutor};
 
 /// Executor for [`a2w_ir::NodeKind::Approval`](a2w_ir::NodeKind::Approval).
 #[derive(Debug, Default, Clone)]
@@ -154,9 +152,7 @@ impl NodeExecutor for Approval {
             // human said no or never showed up.
             let (port, decided_by, reason) = match outcome {
                 ApprovalOutcome::Approved { decided_by } => (0, decided_by, "approved"),
-                ApprovalOutcome::Rejected { decided_by } if timed_out => {
-                    (1, decided_by, "timeout")
-                }
+                ApprovalOutcome::Rejected { decided_by } if timed_out => (1, decided_by, "timeout"),
                 ApprovalOutcome::Rejected { decided_by } => (1, decided_by, "rejected"),
             };
             let mut out_json = item.json.clone();
@@ -173,9 +169,7 @@ impl NodeExecutor for Approval {
                     obj.insert("_decided_by".to_string(), serde_json::Value::String(by));
                 }
             }
-            out.push(
-                Item::produced(out_json, ctx.node_id.clone(), idx).on_port(port),
-            );
+            out.push(Item::produced(out_json, ctx.node_id.clone(), idx).on_port(port));
         }
         Ok(out)
     }
@@ -190,9 +184,7 @@ impl NodeExecutor for Approval {
         let mut out = Vec::with_capacity(input.len());
         for (i, item) in input.into_iter().enumerate() {
             let port = u8::from(i % 2 == 1) as usize;
-            out.push(
-                Item::produced(item.json, ctx.node_id.clone(), i).on_port(port),
-            );
+            out.push(Item::produced(item.json, ctx.node_id.clone(), i).on_port(port));
         }
         let _ = ctx.mode; // appease lint
         let _ = ExecutionMode::DryRun;
@@ -245,7 +237,10 @@ mod tests {
         }
     }
 
-    fn ctx(params: serde_json::Value, gate: Option<Arc<dyn a2w_engine::ApprovalGate>>) -> NodeContext {
+    fn ctx(
+        params: serde_json::Value,
+        gate: Option<Arc<dyn a2w_engine::ApprovalGate>>,
+    ) -> NodeContext {
         NodeContext {
             run_id: "r".into(),
             node_id: "ap".into(),

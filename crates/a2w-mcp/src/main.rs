@@ -72,8 +72,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ships a server that quietly ignores the key they configured.
     let server = match std::env::var("A2W_MASTER_KEY") {
         Ok(_) => {
-            let db_url =
-                std::env::var("A2W_DB_URL").unwrap_or_else(|_| DEFAULT_DB_URL.to_string());
+            let db_url = std::env::var("A2W_DB_URL").unwrap_or_else(|_| DEFAULT_DB_URL.to_string());
             let store = Arc::new(Store::connect(&db_url).await?);
             let vault = Arc::new(Vault::from_env()?);
             eprintln!("a2w-mcp: credential vault enabled (db: {db_url})");

@@ -69,7 +69,11 @@ mod tests {
             .resolve("api_key")
             .await
             .expect("resolve must succeed");
-        assert_eq!(got, Some("s3cr3t".to_string()), "resolved secret must match plaintext");
+        assert_eq!(
+            got,
+            Some("s3cr3t".to_string()),
+            "resolved secret must match plaintext"
+        );
     }
 
     /// A missing credential ref must return `Ok(None)` rather than an error.

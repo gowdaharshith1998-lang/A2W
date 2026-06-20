@@ -15,9 +15,7 @@ use serde_json::{json, Value};
 
 use a2w_engine::{ExecutionMode, MemoryEventLog, StepEvent};
 use a2w_ir::Workflow;
-use a2w_store::{
-    workflow_fingerprint, ApprovalRecord, IdempotencyClaim, StoreResumeSource, Vault,
-};
+use a2w_store::{workflow_fingerprint, ApprovalRecord, IdempotencyClaim, StoreResumeSource, Vault};
 
 use crate::dashboard::DASHBOARD_HTML;
 use crate::error::ApiError;
@@ -42,9 +40,11 @@ pub async fn ready(State(state): State<AppState>) -> Result<Json<Value>, ApiErro
     // `list_workflows` is the cheapest read we have that exercises the pool.
     // We deliberately discard the result — we only care that the query
     // succeeded.
-    state.store.list_workflows().await.map_err(|e| {
-        ApiError::ServiceUnavailable(format!("database is not reachable: {e}"))
-    })?;
+    state
+        .store
+        .list_workflows()
+        .await
+        .map_err(|e| ApiError::ServiceUnavailable(format!("database is not reachable: {e}")))?;
     Ok(Json(json!({ "status": "ready" })))
 }
 
@@ -418,8 +418,7 @@ pub async fn run_workflow(
                          runs side-effected; caller observes ours, audit-trail \
                          canonical is the adopter's."
                     );
-                    ::metrics::counter!("a2w_idempotency_adoption_conflicts_total")
-                        .increment(1);
+                    ::metrics::counter!("a2w_idempotency_adoption_conflicts_total").increment(1);
                     audit_warning = Some(
                         "adoption_conflict: another caller is canonical for this \
                          idempotency key; both runs side-effected. Operator \
@@ -447,8 +446,7 @@ pub async fn run_workflow(
                 let jitter = {
                     use std::collections::hash_map::RandomState;
                     use std::hash::BuildHasher;
-                    let raw = RandomState::new()
-                        .hash_one((attempt, result.run_id.as_str()));
+                    let raw = RandomState::new().hash_one((attempt, result.run_id.as_str()));
                     raw % (base_ms / 2 + 1)
                 };
                 tokio::select! {
@@ -550,8 +548,7 @@ pub async fn run_workflow(
                         break;
                     }
                 }
-                ::metrics::counter!("a2w_idempotency_commit_abandoned_total")
-                    .increment(1);
+                ::metrics::counter!("a2w_idempotency_commit_abandoned_total").increment(1);
                 tracing::error!(
                     workflow = %id_owned, run = %run_owned,
                     "idempotency commit-retry abandoned; reaper must \
@@ -607,7 +604,10 @@ async fn check_sub_workflow_cycle(
     // the runtime SubWorkflow recursion cap.
     const MAX_CYCLE_CHECK_DEPTH: usize = a2w_engine::DEFAULT_MAX_SUB_WORKFLOW_DEPTH as usize * 4;
     let mut visited: HashMap<String, Vec<String>> = HashMap::new();
-    visited.insert(new_id.to_string(), a2w_validator::sub_workflow_references(new_wf));
+    visited.insert(
+        new_id.to_string(),
+        a2w_validator::sub_workflow_references(new_wf),
+    );
     let mut path: Vec<String> = vec![new_id.to_string()];
     let mut on_path: HashSet<String> = HashSet::new();
     on_path.insert(new_id.to_string());
@@ -943,13 +943,19 @@ pub async fn store_credential(
 ) -> Result<Json<Value>, ApiError> {
     let vault = require_vault(&state)?;
     if req.id.trim().is_empty() {
-        return Err(ApiError::BadRequest("`id` must be a non-empty string".into()));
+        return Err(ApiError::BadRequest(
+            "`id` must be a non-empty string".into(),
+        ));
     }
     if req.name.trim().is_empty() {
-        return Err(ApiError::BadRequest("`name` must be a non-empty string".into()));
+        return Err(ApiError::BadRequest(
+            "`name` must be a non-empty string".into(),
+        ));
     }
     if req.secret.is_empty() {
-        return Err(ApiError::BadRequest("`secret` must be a non-empty string".into()));
+        return Err(ApiError::BadRequest(
+            "`secret` must be a non-empty string".into(),
+        ));
     }
     vault
         .store_secret(&state.store, &req.id, &req.name, &req.secret)

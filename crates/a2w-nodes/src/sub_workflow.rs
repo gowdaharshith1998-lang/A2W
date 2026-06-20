@@ -227,7 +227,11 @@ impl NodeExecutor for SubWorkflow {
 /// Node ids in `wf` that have no outgoing connection (terminals).
 fn terminal_node_ids(wf: &a2w_ir::Workflow) -> Vec<&str> {
     use std::collections::HashSet;
-    let producers: HashSet<&str> = wf.connections.iter().map(|c| c.from_node.as_str()).collect();
+    let producers: HashSet<&str> = wf
+        .connections
+        .iter()
+        .map(|c| c.from_node.as_str())
+        .collect();
     wf.nodes
         .iter()
         .filter(|n| !producers.contains(n.id.as_str()))

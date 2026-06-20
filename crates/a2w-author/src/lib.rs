@@ -183,9 +183,7 @@ pub async fn generate_workflow_from_prompt(
         success: false,
         workflow: last_parsed,
         iterations,
-        message: format!(
-            "could not produce a valid workflow in {total_attempts} attempts"
-        ),
+        message: format!("could not produce a valid workflow in {total_attempts} attempts"),
     })
 }
 
@@ -258,9 +256,7 @@ fn build_system_prompt() -> String {
         "- Emit ONLY a single JSON object that is an A2W Workflow. No prose, no \
          explanation, no Markdown code fences.\n",
     );
-    s.push_str(&format!(
-        "- Set \"schema_version\" to {SCHEMA_VERSION}.\n"
-    ));
+    s.push_str(&format!("- Set \"schema_version\" to {SCHEMA_VERSION}.\n"));
     s.push_str("- Give the workflow a short stable \"id\" and a human \"name\".\n");
     s.push_str(
         "- Every node has a unique stable \"id\", a \"kind\" (from the taxonomy \
@@ -468,11 +464,15 @@ mod tests {
     async fn repairs_invalid_then_succeeds() {
         // First response invalid (dangling target), second valid.
         let mock = MockLlm::new(vec![invalid_workflow_json(), valid_workflow_json()]);
-        let outcome = generate_workflow_from_prompt("notify on webhook", &mock, &AuthorConfig::default())
-            .await
-            .expect("no transport error");
+        let outcome =
+            generate_workflow_from_prompt("notify on webhook", &mock, &AuthorConfig::default())
+                .await
+                .expect("no transport error");
 
-        assert!(outcome.success, "should succeed after one repair: {outcome:?}");
+        assert!(
+            outcome.success,
+            "should succeed after one repair: {outcome:?}"
+        );
         assert_eq!(outcome.iterations.len(), 2, "one failed + one success");
         // First iteration recorded a validation failure.
         assert!(outcome.iterations[0].validation.is_some());
@@ -489,7 +489,10 @@ mod tests {
         let outcome = generate_workflow_from_prompt("echo", &mock, &AuthorConfig::default())
             .await
             .expect("no transport error");
-        assert!(outcome.success, "fenced JSON must be extracted: {outcome:?}");
+        assert!(
+            outcome.success,
+            "fenced JSON must be extracted: {outcome:?}"
+        );
         assert_eq!(outcome.iterations.len(), 1, "succeeds on first attempt");
     }
 
@@ -504,7 +507,10 @@ mod tests {
         let outcome = generate_workflow_from_prompt("echo", &mock, &AuthorConfig::default())
             .await
             .expect("no transport error");
-        assert!(outcome.success, "prose-wrapped JSON must be extracted: {outcome:?}");
+        assert!(
+            outcome.success,
+            "prose-wrapped JSON must be extracted: {outcome:?}"
+        );
     }
 
     #[tokio::test]

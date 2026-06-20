@@ -35,8 +35,7 @@ pub const DEFAULT_MAX_CONCURRENCY: usize = 64;
 use crate::event::{EventLog, StepEvent, StepKind};
 use crate::item::{Item, ItemSource};
 use crate::node::{
-    ApprovalGate, CredentialResolver, ExecutionMode, NodeContext, NodeExecutor,
-    SubWorkflowResolver,
+    ApprovalGate, CredentialResolver, ExecutionMode, NodeContext, NodeExecutor, SubWorkflowResolver,
 };
 
 /// Maximum recursion depth for SubWorkflow invocation. Beyond this, the
@@ -452,8 +451,7 @@ impl Engine {
                     .get(node.id.as_str())
                     .map(Vec::as_slice)
                     .unwrap_or(&[]);
-                let input =
-                    self.gather_input(node, trigger_id, &trigger_items, edges, &outputs);
+                let input = self.gather_input(node, trigger_id, &trigger_items, edges, &outputs);
                 if input.is_empty() && !edges.is_empty() {
                     // Has upstream but received nothing — skip without firing.
                     log.record(StepEvent {
@@ -619,7 +617,17 @@ impl Engine {
 
         let start = Instant::now();
         let result = self
-            .execute_with_retry(executor.as_ref(), &ctx, input, mode, node.retry.as_ref(), run_id, &node.id, input_count, log)
+            .execute_with_retry(
+                executor.as_ref(),
+                &ctx,
+                input,
+                mode,
+                node.retry.as_ref(),
+                run_id,
+                &node.id,
+                input_count,
+                log,
+            )
             .await;
         let latency_ms = elapsed_ms(start);
 
@@ -808,12 +816,7 @@ pub enum HydrateResult {
 pub trait ResumeSource: Send + Sync {
     /// Probe for the previously-persisted output `Vec<Item>` for
     /// `(run_id, node_id)`. See [`HydrateResult`] for the cases.
-    async fn hydrate(
-        &self,
-        run_id: &str,
-        node_id: &str,
-        expected_kind: &str,
-    ) -> HydrateResult;
+    async fn hydrate(&self, run_id: &str, node_id: &str, expected_kind: &str) -> HydrateResult;
 }
 
 #[cfg(test)]
@@ -847,7 +850,11 @@ mod retry_tests {
         fn has_side_effects(&self) -> bool {
             true
         }
-        async fn execute(&self, _ctx: &NodeContext, _input: Vec<Item>) -> Result<Vec<Item>, NodeError> {
+        async fn execute(
+            &self,
+            _ctx: &NodeContext,
+            _input: Vec<Item>,
+        ) -> Result<Vec<Item>, NodeError> {
             let n = self.attempts.fetch_add(1, Ordering::SeqCst) + 1;
             if n <= self.fail_count {
                 Err(NodeError::Runtime(format!("flaky attempt {n}")))
@@ -883,7 +890,10 @@ mod retry_tests {
     async fn retry_succeeds_within_max_attempts() {
         let flaky = Arc::new(FlakyExecutor::new(2));
         let registry = NodeRegistry::new()
-            .with(NodeKind::WebhookTrigger, Arc::new(super::__tests::PassThrough))
+            .with(
+                NodeKind::WebhookTrigger,
+                Arc::new(super::__tests::PassThrough),
+            )
             .with(NodeKind::HttpRequest, flaky.clone());
         let engine = Engine::new(registry);
         let log = MemoryEventLog::new();
@@ -908,7 +918,10 @@ mod retry_tests {
         // Permanently failing executor with retry=2 → 2 attempts, then fail.
         let flaky = Arc::new(FlakyExecutor::new(99));
         let registry = NodeRegistry::new()
-            .with(NodeKind::WebhookTrigger, Arc::new(super::__tests::PassThrough))
+            .with(
+                NodeKind::WebhookTrigger,
+                Arc::new(super::__tests::PassThrough),
+            )
             .with(NodeKind::HttpRequest, flaky.clone());
         let engine = Engine::new(registry);
         let mut wf = flaky_wf();
@@ -964,7 +977,10 @@ mod retry_tests {
             peak: Arc::clone(&peak),
         });
         let registry = NodeRegistry::new()
-            .with(NodeKind::WebhookTrigger, Arc::new(super::__tests::PassThrough))
+            .with(
+                NodeKind::WebhookTrigger,
+                Arc::new(super::__tests::PassThrough),
+            )
             // Co-opt Transform for the counter; it's a pure kind.
             .with(NodeKind::Transform, Arc::clone(&exec));
         let engine = Engine::new(registry).with_max_concurrency(2);
@@ -1001,7 +1017,10 @@ mod retry_tests {
     async fn retry_not_applied_in_dry_run() {
         let flaky = Arc::new(FlakyExecutor::new(99));
         let registry = NodeRegistry::new()
-            .with(NodeKind::WebhookTrigger, Arc::new(super::__tests::PassThrough))
+            .with(
+                NodeKind::WebhookTrigger,
+                Arc::new(super::__tests::PassThrough),
+            )
             .with(NodeKind::HttpRequest, flaky.clone());
         let engine = Engine::new(registry);
         let log = MemoryEventLog::new();
@@ -1039,7 +1058,11 @@ pub(crate) mod __tests {
         fn has_side_effects(&self) -> bool {
             false
         }
-        async fn execute(&self, _ctx: &NodeContext, input: Vec<Item>) -> Result<Vec<Item>, NodeError> {
+        async fn execute(
+            &self,
+            _ctx: &NodeContext,
+            input: Vec<Item>,
+        ) -> Result<Vec<Item>, NodeError> {
             Ok(input)
         }
     }

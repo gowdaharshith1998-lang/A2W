@@ -181,13 +181,14 @@ pub fn apply(wf: &Workflow, ops: &[IrOp]) -> Workflow {
                 to_node,
             } => {
                 let exists = out.connections.iter().any(|c| {
-                    c.from_node == *from_node
-                        && c.from_port == *from_port
-                        && c.to_node == *to_node
+                    c.from_node == *from_node && c.from_port == *from_port && c.to_node == *to_node
                 });
                 if !exists {
-                    out.connections
-                        .push(Connection::new(from_node.clone(), *from_port, to_node.clone()));
+                    out.connections.push(Connection::new(
+                        from_node.clone(),
+                        *from_port,
+                        to_node.clone(),
+                    ));
                 }
             }
         }

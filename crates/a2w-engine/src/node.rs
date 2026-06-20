@@ -88,7 +88,10 @@ impl fmt::Debug for NodeContext {
             .field("kind", &self.kind)
             .field("params", &self.params)
             .field("mode", &self.mode)
-            .field("credentials", &self.credentials.as_ref().map(|_| "<resolver>"))
+            .field(
+                "credentials",
+                &self.credentials.as_ref().map(|_| "<resolver>"),
+            )
             .field(
                 "sub_workflows",
                 &self.sub_workflows.as_ref().map(|_| "<resolver>"),
@@ -157,10 +160,7 @@ pub trait ApprovalGate: Send + Sync {
     ///
     /// # Errors
     /// [`CredentialError`] on a store read failure.
-    async fn poll(
-        &self,
-        approval_id: &str,
-    ) -> Result<Option<ApprovalOutcome>, CredentialError>;
+    async fn poll(&self, approval_id: &str) -> Result<Option<ApprovalOutcome>, CredentialError>;
 }
 
 /// Resolves a stored workflow by its id, enabling the SubWorkflow executor to

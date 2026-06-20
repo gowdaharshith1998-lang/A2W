@@ -288,11 +288,7 @@ pub fn ip_is_blocked(ip: IpAddr) -> bool {
                 return true;
             }
             // Discard prefix 100::/64
-            if segs[0] == 0x0100
-                && segs[1] == 0
-                && segs[2] == 0
-                && segs[3] == 0
-            {
+            if segs[0] == 0x0100 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0 {
                 return true;
             }
             v6.is_loopback()
@@ -408,22 +404,19 @@ pub(crate) async fn validate_url(
     }
 
     // DNS resolution with timeout. Literal IPs resolve to themselves.
-    let addrs = tokio::time::timeout(
-        policy.dns_timeout,
-        lookup_host((host.as_str(), port)),
-    )
-    .await
-    .map_err(|_| {
-        NodeError::Runtime(format!(
-            "DNS resolution of '{host}' timed out after {}s (refusing to send)",
-            policy.dns_timeout.as_secs()
-        ))
-    })?
-    .map_err(|e| {
-        NodeError::Runtime(format!(
-            "DNS resolution of '{host}' failed (refusing to send): {e}"
-        ))
-    })?;
+    let addrs = tokio::time::timeout(policy.dns_timeout, lookup_host((host.as_str(), port)))
+        .await
+        .map_err(|_| {
+            NodeError::Runtime(format!(
+                "DNS resolution of '{host}' timed out after {}s (refusing to send)",
+                policy.dns_timeout.as_secs()
+            ))
+        })?
+        .map_err(|e| {
+            NodeError::Runtime(format!(
+                "DNS resolution of '{host}' failed (refusing to send): {e}"
+            ))
+        })?;
 
     // Walk all returned addresses. If block_private is on and any returned IP
     // is blocked, REFUSE — we don't want partial-block (the second-round
@@ -491,8 +484,13 @@ fn pinned_client(target: &ResolvedTarget, policy: &EgressPolicy) -> Result<Clien
 /// Parsed representation of the optional `auth` param.
 #[derive(Debug, Clone)]
 enum AuthSpec {
-    Bearer { credential_ref: String },
-    Header { credential_ref: String, header_name: String },
+    Bearer {
+        credential_ref: String,
+    },
+    Header {
+        credential_ref: String,
+        header_name: String,
+    },
 }
 
 impl AuthSpec {
@@ -531,7 +529,10 @@ impl AuthSpec {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("X-Api-Key")
                     .to_owned();
-                AuthSpec::Header { credential_ref, header_name }
+                AuthSpec::Header {
+                    credential_ref,
+                    header_name,
+                }
             }
             other => {
                 return Some(Err(NodeError::BadParams(format!(
@@ -602,7 +603,10 @@ pub struct HttpRequest;
 
 impl HttpRequest {
     /// Resolve the request URL for one input item (templated).
-    fn resolve_url(params: &serde_json::Value, item: &serde_json::Value) -> Result<String, NodeError> {
+    fn resolve_url(
+        params: &serde_json::Value,
+        item: &serde_json::Value,
+    ) -> Result<String, NodeError> {
         let raw = params
             .get("url")
             .and_then(serde_json::Value::as_str)
@@ -627,11 +631,7 @@ impl NodeExecutor for HttpRequest {
         true
     }
 
-    async fn execute(
-        &self,
-        ctx: &NodeContext,
-        input: Vec<Item>,
-    ) -> Result<Vec<Item>, NodeError> {
+    async fn execute(&self, ctx: &NodeContext, input: Vec<Item>) -> Result<Vec<Item>, NodeError> {
         let method = Self::resolve_method(&ctx.params)?;
         let auth_spec = ctx
             .params
@@ -745,11 +745,7 @@ impl NodeExecutor for HttpRequest {
         Ok(out)
     }
 
-    async fn dry_run(
-        &self,
-        ctx: &NodeContext,
-        input: Vec<Item>,
-    ) -> Result<Vec<Item>, NodeError> {
+    async fn dry_run(&self, ctx: &NodeContext, input: Vec<Item>) -> Result<Vec<Item>, NodeError> {
         // No network: produce a faithful mock per input item, echoing the
         // resolved URL so the run shape can be inspected.
         let mut out = Vec::with_capacity(input.len());
@@ -814,8 +810,8 @@ mod tests {
     use std::net::Ipv6Addr;
     use std::sync::Arc;
 
-    use async_trait::async_trait;
     use a2w_engine::{CredentialError, CredentialResolver};
+    use async_trait::async_trait;
 
     use super::*;
 
@@ -885,15 +881,15 @@ mod tests {
     #[test]
     fn ip_blocked_iana_reserved_ranges() {
         // Audit-fix: TEST-NETs, benchmark, IETF protocol assignment, 6to4 anycast, 240/4.
-        assert!(ip_is_blocked(v4(192, 0, 0, 1)));      // 192.0.0.0/24
-        assert!(ip_is_blocked(v4(192, 0, 2, 1)));      // TEST-NET-1
-        assert!(ip_is_blocked(v4(198, 18, 0, 1)));     // benchmark
+        assert!(ip_is_blocked(v4(192, 0, 0, 1))); // 192.0.0.0/24
+        assert!(ip_is_blocked(v4(192, 0, 2, 1))); // TEST-NET-1
+        assert!(ip_is_blocked(v4(198, 18, 0, 1))); // benchmark
         assert!(ip_is_blocked(v4(198, 19, 255, 255))); // benchmark high
-        assert!(ip_is_blocked(v4(198, 51, 100, 1)));   // TEST-NET-2
-        assert!(ip_is_blocked(v4(203, 0, 113, 1)));    // TEST-NET-3
-        assert!(ip_is_blocked(v4(192, 88, 99, 1)));    // 6to4 anycast
-        assert!(ip_is_blocked(v4(240, 0, 0, 0)));      // reserved 240/4
-        assert!(ip_is_blocked(v4(245, 1, 2, 3)));      // reserved 240/4
+        assert!(ip_is_blocked(v4(198, 51, 100, 1))); // TEST-NET-2
+        assert!(ip_is_blocked(v4(203, 0, 113, 1))); // TEST-NET-3
+        assert!(ip_is_blocked(v4(192, 88, 99, 1))); // 6to4 anycast
+        assert!(ip_is_blocked(v4(240, 0, 0, 0))); // reserved 240/4
+        assert!(ip_is_blocked(v4(245, 1, 2, 3))); // reserved 240/4
     }
 
     #[test]
@@ -967,14 +963,18 @@ mod tests {
     #[tokio::test]
     async fn validate_url_rejects_non_http_scheme() {
         let p = permissive_policy();
-        let err = validate_url("file:///etc/passwd", &p).await.expect_err("file://");
+        let err = validate_url("file:///etc/passwd", &p)
+            .await
+            .expect_err("file://");
         assert!(matches!(err, NodeError::BadParams(_)));
     }
 
     #[tokio::test]
     async fn validate_url_rejects_127_0_0_1() {
         let p = permissive_policy();
-        let err = validate_url("http://127.0.0.1/", &p).await.expect_err("loopback");
+        let err = validate_url("http://127.0.0.1/", &p)
+            .await
+            .expect_err("loopback");
         assert!(matches!(err, NodeError::Runtime(_)));
     }
 
@@ -992,7 +992,9 @@ mod tests {
         let mut p = permissive_policy();
         p.allowed_ports = vec![80, 443];
         // 8.8.8.8 is public so the IP check passes; port 22 is blocked.
-        let err = validate_url("http://8.8.8.8:22/", &p).await.expect_err("port 22");
+        let err = validate_url("http://8.8.8.8:22/", &p)
+            .await
+            .expect_err("port 22");
         assert!(matches!(err, NodeError::Runtime(_)));
         assert!(err.to_string().contains("port 22"));
     }
@@ -1007,7 +1009,10 @@ mod tests {
         // returns a target without erroring on the port.
         let r = validate_url("http://8.8.8.8:22/", &p).await;
         // The DNS step succeeds for a literal IP, so we expect Ok(target).
-        assert!(r.is_ok(), "port-allowlist=empty must skip port check: {r:?}");
+        assert!(
+            r.is_ok(),
+            "port-allowlist=empty must skip port check: {r:?}"
+        );
     }
 
     #[tokio::test]
@@ -1062,7 +1067,9 @@ mod tests {
         p.denied_hosts = vec!["evil.example".to_string()];
         // Request with trailing dot + uppercase — normalization should still
         // match the denylist entry.
-        let err = validate_url("http://EVIL.example./", &p).await.expect_err("denied");
+        let err = validate_url("http://EVIL.example./", &p)
+            .await
+            .expect_err("denied");
         assert!(matches!(err, NodeError::Runtime(_)));
     }
 

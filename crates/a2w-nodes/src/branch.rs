@@ -158,10 +158,10 @@ mod tests {
             params,
             mode: ExecutionMode::Run,
             credentials: None,
-        sub_workflows: None,
-        sub_workflow_depth: 0,
-        workflow_id: None,
-        approvals: None,
+            sub_workflows: None,
+            sub_workflow_depth: 0,
+            workflow_id: None,
+            approvals: None,
         }
     }
 

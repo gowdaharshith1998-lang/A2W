@@ -350,11 +350,7 @@ fn cycle_is_rejected_and_engine_refuses() {
     // t -> a -> b -> a  (cycle a<->b)
     let w = wf(
         "cycle",
-        vec![
-            trig("t"),
-            xform("a", json!({})),
-            xform("b", json!({})),
-        ],
+        vec![trig("t"), xform("a", json!({})), xform("b", json!({}))],
         vec![c("t", "a"), c("a", "b"), c("b", "a")],
     );
     let report = validate(&w);
@@ -368,11 +364,7 @@ fn cycle_is_rejected_and_engine_refuses() {
 #[tokio::test]
 async fn engine_refuses_invalid_workflow() {
     // dangling target + no trigger.
-    let w = wf(
-        "bad",
-        vec![xform("a", json!({}))],
-        vec![c("a", "ghost")],
-    );
+    let w = wf("bad", vec![xform("a", json!({}))], vec![c("a", "ghost")]);
     assert!(!validate(&w).is_valid);
     match dry_run(&w).await {
         Err(EngineError::Invalid(report)) => assert!(!report.is_valid),

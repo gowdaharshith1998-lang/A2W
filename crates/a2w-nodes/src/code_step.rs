@@ -129,7 +129,9 @@ impl WasmSource {
         match self {
             WasmSource::Base64(b64) => base64::engine::general_purpose::STANDARD
                 .decode(b64.as_bytes())
-                .map_err(|e| CodeError::BadParams(format!("`wasm.base64` is not valid base64: {e}"))),
+                .map_err(|e| {
+                    CodeError::BadParams(format!("`wasm.base64` is not valid base64: {e}"))
+                }),
             WasmSource::Path(path) => {
                 let root = std::env::var("A2W_CODE_WASM_DIR").map_err(|_| {
                     CodeError::BadParams(
@@ -320,12 +322,17 @@ impl CodeStep {
     /// Parse the `wasm` source from params, mapping a bad source to
     /// [`NodeError::BadParams`].
     fn wasm_source(params: &serde_json::Value) -> Result<WasmSource, NodeError> {
-        let raw = params.get("wasm").cloned().unwrap_or(serde_json::Value::Null);
+        let raw = params
+            .get("wasm")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         WasmSource::from_params(&raw).map_err(|e| NodeError::BadParams(e.to_string()))
     }
 
     /// Parse the optional `config` map (string -> string) from params.
-    fn config(params: &serde_json::Value) -> Result<std::collections::BTreeMap<String, String>, NodeError> {
+    fn config(
+        params: &serde_json::Value,
+    ) -> Result<std::collections::BTreeMap<String, String>, NodeError> {
         match params.get("config") {
             None | Some(serde_json::Value::Null) => Ok(Default::default()),
             Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
@@ -360,7 +367,9 @@ impl NodeExecutor for CodeStep {
         let source = Self::wasm_source(&ctx.params)?;
         let function = Self::function(&ctx.params)?;
         let config = Self::config(&ctx.params)?;
-        let wasm_bytes = source.load().map_err(|e| NodeError::BadParams(e.to_string()))?;
+        let wasm_bytes = source
+            .load()
+            .map_err(|e| NodeError::BadParams(e.to_string()))?;
 
         // The default ExtismRunner carries no config; when `config` is present
         // build a config-aware runner for this execution. A non-default
@@ -410,7 +419,9 @@ impl NodeExecutor for CodeStep {
                 runner.run(&wasm_bytes, &function, &input_bytes)
             })
             .await
-            .map_err(|e| NodeError::Runtime(format!("code_step task panicked or was cancelled: {e}")))?
+            .map_err(|e| {
+                NodeError::Runtime(format!("code_step task panicked or was cancelled: {e}"))
+            })?
             .map_err(|e| NodeError::Runtime(e.to_string()))?;
 
             let value = Self::parse_output(output_bytes);
@@ -506,10 +517,10 @@ mod tests {
             params,
             mode,
             credentials: None,
-        sub_workflows: None,
-        sub_workflow_depth: 0,
-        workflow_id: None,
-        approvals: None,
+            sub_workflows: None,
+            sub_workflow_depth: 0,
+            workflow_id: None,
+            approvals: None,
         }
     }
 
@@ -545,9 +556,7 @@ mod tests {
 
     #[test]
     fn wasm_source_load_decodes_base64_and_rejects_bad_base64() {
-        let src = WasmSource::Base64(
-            base64::engine::general_purpose::STANDARD.encode(b"hello"),
-        );
+        let src = WasmSource::Base64(base64::engine::general_purpose::STANDARD.encode(b"hello"));
         assert_eq!(src.load().expect("decodes"), b"hello");
 
         let bad = WasmSource::Base64("not!!base64".into());
@@ -589,8 +598,14 @@ mod tests {
         let seen = runner.seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
         assert!(seen.iter().all(|(f, _)| f == "go"));
-        assert_eq!(seen[0].1, serde_json::to_vec(&serde_json::json!({ "a": 1 })).unwrap());
-        assert_eq!(seen[1].1, serde_json::to_vec(&serde_json::json!({ "b": 2 })).unwrap());
+        assert_eq!(
+            seen[0].1,
+            serde_json::to_vec(&serde_json::json!({ "a": 1 })).unwrap()
+        );
+        assert_eq!(
+            seen[1].1,
+            serde_json::to_vec(&serde_json::json!({ "b": 2 })).unwrap()
+        );
     }
 
     #[tokio::test]
@@ -715,4 +730,3 @@ mod tests {
         assert!(matches!(err, NodeError::BadParams(_)), "got {err:?}");
     }
 }
-

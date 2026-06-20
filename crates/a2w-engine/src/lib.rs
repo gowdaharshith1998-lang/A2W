@@ -21,14 +21,14 @@ mod event;
 mod item;
 mod node;
 
+pub use engine::HydrateResult;
 pub use engine::{
     Engine, EngineError, NodeRegistry, ResumeSource, RunResult, RunStatus,
     DEFAULT_MAX_SUB_WORKFLOW_DEPTH,
 };
 pub use event::{EventLog, MemoryEventLog, StepEvent, StepKind};
 pub use item::{Item, ItemSource};
-pub use engine::HydrateResult;
 pub use node::{
-    ApprovalGate, ApprovalOutcome, CredentialError, CredentialResolver, ExecutionMode,
-    NodeContext, NodeError, NodeExecutor, SubWorkflowResolver,
+    ApprovalGate, ApprovalOutcome, CredentialError, CredentialResolver, ExecutionMode, NodeContext,
+    NodeError, NodeExecutor, SubWorkflowResolver,
 };

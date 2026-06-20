@@ -70,10 +70,16 @@ fn bench(c: &mut Criterion) {
     let chain_100 = build_chain(100);
     let wide_10 = build_wide(10);
     let wide_100 = build_wide(100);
-    c.bench_function("engine/chain/10", |b| b.iter(|| run_workflow_sync(&chain_10)));
-    c.bench_function("engine/chain/100", |b| b.iter(|| run_workflow_sync(&chain_100)));
+    c.bench_function("engine/chain/10", |b| {
+        b.iter(|| run_workflow_sync(&chain_10))
+    });
+    c.bench_function("engine/chain/100", |b| {
+        b.iter(|| run_workflow_sync(&chain_100))
+    });
     c.bench_function("engine/wide/10", |b| b.iter(|| run_workflow_sync(&wide_10)));
-    c.bench_function("engine/wide/100", |b| b.iter(|| run_workflow_sync(&wide_100)));
+    c.bench_function("engine/wide/100", |b| {
+        b.iter(|| run_workflow_sync(&wide_100))
+    });
 }
 
 criterion_group!(benches, bench);

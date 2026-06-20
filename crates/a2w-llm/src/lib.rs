@@ -180,9 +180,7 @@ impl LlmClient for AnthropicClient {
         let blocks = parsed
             .get("content")
             .and_then(serde_json::Value::as_array)
-            .ok_or_else(|| {
-                LlmError::Api(format!("response missing a `content` array: {text}"))
-            })?;
+            .ok_or_else(|| LlmError::Api(format!("response missing a `content` array: {text}")))?;
 
         let mut out = String::new();
         for block in blocks {

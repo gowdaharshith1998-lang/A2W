@@ -23,7 +23,9 @@ impl Wait {
             .get("duration_ms")
             .map(|v| v.as_u64())
             .unwrap_or(Some(0))
-            .ok_or_else(|| NodeError::BadParams("Wait `duration_ms` must be a non-negative integer".into()))?;
+            .ok_or_else(|| {
+                NodeError::BadParams("Wait `duration_ms` must be a non-negative integer".into())
+            })?;
         // Cap the wait to 60 minutes to defend against `duration_ms: u64::MAX`
         // bringing the engine to a halt for a workflow author's mistake.
         const MAX_MS: u64 = 60 * 60 * 1000;
@@ -77,10 +79,10 @@ mod tests {
             params,
             mode,
             credentials: None,
-        sub_workflows: None,
-        sub_workflow_depth: 0,
-        workflow_id: None,
-        approvals: None,
+            sub_workflows: None,
+            sub_workflow_depth: 0,
+            workflow_id: None,
+            approvals: None,
         }
     }
 
@@ -97,10 +99,7 @@ mod tests {
     #[tokio::test]
     async fn duration_actually_waits_in_run_mode() {
         let w = Wait;
-        let c = ctx(
-            serde_json::json!({ "duration_ms": 50 }),
-            ExecutionMode::Run,
-        );
+        let c = ctx(serde_json::json!({ "duration_ms": 50 }), ExecutionMode::Run);
         // Non-empty input — audit-2: Wait now skips the sleep on empty input
         // (unselected-branch arm) and only fires when there is real work to
         // act on.
@@ -142,6 +141,9 @@ mod tests {
         let start = std::time::Instant::now();
         let _ = w.dry_run(&c, vec![]).await.unwrap();
         let elapsed = start.elapsed();
-        assert!(elapsed < Duration::from_millis(200), "dry_run waited: {elapsed:?}");
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "dry_run waited: {elapsed:?}"
+        );
     }
 }

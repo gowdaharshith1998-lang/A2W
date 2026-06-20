@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 # Builder
 # ---------------------------------------------------------------------------
-FROM rust:1.82-slim AS builder
+FROM rust:1.86-slim-bookworm AS builder
 WORKDIR /workspace
 
 # System headers needed by sqlx / aes-gcm / extism transitive deps.

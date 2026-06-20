@@ -29,11 +29,7 @@ impl NodeExecutor for Transform {
         false
     }
 
-    async fn execute(
-        &self,
-        ctx: &NodeContext,
-        input: Vec<Item>,
-    ) -> Result<Vec<Item>, NodeError> {
+    async fn execute(&self, ctx: &NodeContext, input: Vec<Item>) -> Result<Vec<Item>, NodeError> {
         // Pull the optional `set` object out of params.
         let set = match ctx.params.get("set") {
             None | Some(serde_json::Value::Null) => None,

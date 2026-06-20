@@ -63,7 +63,12 @@ impl Switch {
         spec.default_port.unwrap_or_else(|| {
             // No explicit default: synthesize one past the highest explicit
             // case port. Empty cases array → port 0.
-            spec.cases.iter().map(|c| c.port).max().map(|m| m + 1).unwrap_or(0)
+            spec.cases
+                .iter()
+                .map(|c| c.port)
+                .max()
+                .map(|m| m + 1)
+                .unwrap_or(0)
         })
     }
 }
@@ -99,10 +104,10 @@ mod tests {
             params,
             mode: ExecutionMode::Run,
             credentials: None,
-        sub_workflows: None,
-        sub_workflow_depth: 0,
-        workflow_id: None,
-        approvals: None,
+            sub_workflows: None,
+            sub_workflow_depth: 0,
+            workflow_id: None,
+            approvals: None,
         }
     }
 

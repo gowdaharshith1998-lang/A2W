@@ -54,7 +54,6 @@ impl std::fmt::Debug for LlmCall {
     }
 }
 
-
 impl LlmCall {
     /// Construct with an explicit LLM client (tests).
     #[must_use]
@@ -125,9 +124,10 @@ impl NodeExecutor for LlmCall {
         let mut out = Vec::with_capacity(input.len());
         for item in &input {
             let prompt = template::render(&spec.prompt, &item.json);
-            let reply = client.complete(system, &prompt).await.map_err(|e| {
-                NodeError::Runtime(format!("LlmCall transport failed: {e}"))
-            })?;
+            let reply = client
+                .complete(system, &prompt)
+                .await
+                .map_err(|e| NodeError::Runtime(format!("LlmCall transport failed: {e}")))?;
             out.push(Item::produced(
                 serde_json::json!({ "text": reply }),
                 ctx.node_id.clone(),
@@ -175,8 +175,8 @@ mod tests {
             credentials: None,
             sub_workflows: None,
             sub_workflow_depth: 0,
-        workflow_id: None,
-        approvals: None,
+            workflow_id: None,
+            approvals: None,
         }
     }
 
@@ -184,7 +184,10 @@ mod tests {
     async fn execute_with_mock_emits_one_item_per_input() {
         let mock = Arc::new(MockLlm::new(vec!["hi".to_string(), "ho".to_string()]));
         let node = LlmCall::new(mock);
-        let c = ctx(serde_json::json!({ "prompt": "echo {{json}}" }), ExecutionMode::Run);
+        let c = ctx(
+            serde_json::json!({ "prompt": "echo {{json}}" }),
+            ExecutionMode::Run,
+        );
         let input = vec![
             Item::root(serde_json::json!({ "id": 1 })),
             Item::root(serde_json::json!({ "id": 2 })),

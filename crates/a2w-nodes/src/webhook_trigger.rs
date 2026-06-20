@@ -18,11 +18,7 @@ impl NodeExecutor for WebhookTrigger {
         false
     }
 
-    async fn execute(
-        &self,
-        _ctx: &NodeContext,
-        input: Vec<Item>,
-    ) -> Result<Vec<Item>, NodeError> {
+    async fn execute(&self, _ctx: &NodeContext, input: Vec<Item>) -> Result<Vec<Item>, NodeError> {
         // The engine already seeded the trigger items; pass them through. The
         // engine re-stamps lineage to this node on the way out.
         Ok(input)

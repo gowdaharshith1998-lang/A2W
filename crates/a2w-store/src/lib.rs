@@ -206,7 +206,9 @@ impl Store {
             sqlx::query_as("SELECT schema_version FROM _a2w_meta WHERE id = 1")
                 .fetch_optional(&self.pool)
                 .await?;
-        Ok(row.map(|(v,)| u32::try_from(v.max(0)).unwrap_or(0)).unwrap_or(0))
+        Ok(row
+            .map(|(v,)| u32::try_from(v.max(0)).unwrap_or(0))
+            .unwrap_or(0))
     }
 
     /// Persist a new schema version (upsert into the single meta row).
@@ -317,11 +319,9 @@ impl Store {
                 )
                 .execute(&self.pool)
                 .await;
-                let _ = sqlx::query(
-                    "ALTER TABLE idempotency_keys ADD COLUMN expires_at INTEGER",
-                )
-                .execute(&self.pool)
-                .await;
+                let _ = sqlx::query("ALTER TABLE idempotency_keys ADD COLUMN expires_at INTEGER")
+                    .execute(&self.pool)
+                    .await;
                 let mut tx = self.pool.begin().await?;
                 sqlx::query(
                     "CREATE TABLE idempotency_keys_new (\
@@ -354,11 +354,9 @@ impl Store {
                 let _ = sqlx::query("DROP INDEX IF EXISTS sqlite_autoindex_idempotency_keys_1")
                     .execute(&mut *tx)
                     .await;
-                sqlx::query(
-                    "ALTER TABLE idempotency_keys_new RENAME TO idempotency_keys",
-                )
-                .execute(&mut *tx)
-                .await?;
+                sqlx::query("ALTER TABLE idempotency_keys_new RENAME TO idempotency_keys")
+                    .execute(&mut *tx)
+                    .await?;
                 tx.commit().await?;
             } else {
                 // Table is already v2-shaped (or never existed). Either
@@ -395,16 +393,12 @@ impl Store {
             )
             .execute(&self.pool)
             .await?;
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status)",
-            )
-            .execute(&self.pool)
-            .await?;
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS idx_approvals_run ON approvals(run_id)",
-            )
-            .execute(&self.pool)
-            .await?;
+            sqlx::query("CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status)")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("CREATE INDEX IF NOT EXISTS idx_approvals_run ON approvals(run_id)")
+                .execute(&self.pool)
+                .await?;
 
             version = 2;
             self.set_schema_version(version).await?;
@@ -412,11 +406,9 @@ impl Store {
 
         // ---- v2 -> v3: runs.workflow_fingerprint (R4 audit-fix) ---------------
         if version < 3 {
-            let _ = sqlx::query(
-                "ALTER TABLE runs ADD COLUMN workflow_fingerprint TEXT",
-            )
-            .execute(&self.pool)
-            .await;
+            let _ = sqlx::query("ALTER TABLE runs ADD COLUMN workflow_fingerprint TEXT")
+                .execute(&self.pool)
+                .await;
             version = 3;
             self.set_schema_version(version).await?;
         }
@@ -472,10 +464,9 @@ impl Store {
             // inverse-index. Without this, DELETE/PUT cycle checks would
             // silently treat stored-but-not-re-saved workflows as having
             // no references — allowing dangling deletes and missed cycles.
-            let rows: Vec<(String, String)> =
-                sqlx::query_as("SELECT id, json FROM workflows")
-                    .fetch_all(&self.pool)
-                    .await?;
+            let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, json FROM workflows")
+                .fetch_all(&self.pool)
+                .await?;
             for (id, json) in rows {
                 if let Ok(wf) = serde_json::from_str::<Workflow>(&json) {
                     for to in a2w_validator::sub_workflow_references(&wf) {
@@ -568,10 +559,7 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::Sqlx`] on a read failure.
-    pub async fn referenced_workflows_of(
-        &self,
-        from_id: &str,
-    ) -> Result<Vec<String>, StoreError> {
+    pub async fn referenced_workflows_of(&self, from_id: &str) -> Result<Vec<String>, StoreError> {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT to_id FROM workflow_references WHERE from_id = ?1 ORDER BY to_id",
         )
@@ -693,7 +681,8 @@ impl Store {
         fingerprint: &str,
         result: &RunResult,
     ) -> Result<(), StoreError> {
-        self.save_run_inner(workflow_id, Some(fingerprint), result, None).await
+        self.save_run_inner(workflow_id, Some(fingerprint), result, None)
+            .await
     }
 
     /// R5: full-fidelity save. Persists the workflow fingerprint AND a
@@ -717,11 +706,7 @@ impl Store {
             .await
     }
 
-    pub async fn save_run(
-        &self,
-        workflow_id: &str,
-        result: &RunResult,
-    ) -> Result<(), StoreError> {
+    pub async fn save_run(&self, workflow_id: &str, result: &RunResult) -> Result<(), StoreError> {
         self.save_run_inner(workflow_id, None, result, None).await
     }
 
@@ -774,8 +759,7 @@ impl Store {
             .await?;
 
         // Compute per-(run, node) seq numbers in insertion order.
-        let mut next_seq: std::collections::HashMap<&str, u32> =
-            std::collections::HashMap::new();
+        let mut next_seq: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
         for ev in &result.events {
             let seq = next_seq.entry(ev.node_id.as_str()).or_insert(0);
             let this_seq = *seq;
@@ -791,9 +775,7 @@ impl Store {
                 _ => None,
             };
 
-            let node_kind = node_kinds
-                .and_then(|m| m.get(ev.node_id.as_str()))
-                .copied();
+            let node_kind = node_kinds.and_then(|m| m.get(ev.node_id.as_str())).copied();
             sqlx::query(
                 "INSERT INTO step_records (\
                     run_id, node_id, seq, kind, latency_ms, \
@@ -1199,10 +1181,7 @@ impl Store {
     ///
     /// # Errors
     /// [`StoreError::Sqlx`] on a read failure.
-    pub async fn list_step_records(
-        &self,
-        run_id: &str,
-    ) -> Result<Vec<StepRecord>, StoreError> {
+    pub async fn list_step_records(&self, run_id: &str) -> Result<Vec<StepRecord>, StoreError> {
         type StepRow = (
             String,
             String,
@@ -1214,30 +1193,31 @@ impl Store {
             Option<String>,
             Option<String>,
         );
-        let rows: Vec<StepRow> =
-            sqlx::query_as(
-                "SELECT run_id, node_id, seq, kind, latency_ms, \
+        let rows: Vec<StepRow> = sqlx::query_as(
+            "SELECT run_id, node_id, seq, kind, latency_ms, \
                         input_items, output_items, output_json, error \
                  FROM step_records \
                  WHERE run_id = ?1 \
                  ORDER BY node_id, seq",
-            )
-            .bind(run_id)
-            .fetch_all(&self.pool)
-            .await?;
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows
             .into_iter()
-            .map(|(rid, nid, seq, kind, lat, inp, outp, json, err)| StepRecord {
-                run_id: rid,
-                node_id: nid,
-                seq: u32::try_from(seq.max(0)).unwrap_or(0),
-                kind,
-                latency_ms: u64::try_from(lat.max(0)).unwrap_or(0),
-                input_items: u32::try_from(inp.max(0)).unwrap_or(0),
-                output_items: u32::try_from(outp.max(0)).unwrap_or(0),
-                output_json: json,
-                error: err,
-            })
+            .map(
+                |(rid, nid, seq, kind, lat, inp, outp, json, err)| StepRecord {
+                    run_id: rid,
+                    node_id: nid,
+                    seq: u32::try_from(seq.max(0)).unwrap_or(0),
+                    kind,
+                    latency_ms: u64::try_from(lat.max(0)).unwrap_or(0),
+                    input_items: u32::try_from(inp.max(0)).unwrap_or(0),
+                    output_items: u32::try_from(outp.max(0)).unwrap_or(0),
+                    output_json: json,
+                    error: err,
+                },
+            )
             .collect())
     }
 }
@@ -1264,7 +1244,10 @@ impl IdempotencyClaim {
     /// `true` when the caller should run (Acquired or Expired).
     #[must_use]
     pub fn should_run(&self) -> bool {
-        matches!(self, IdempotencyClaim::Acquired | IdempotencyClaim::Expired(_))
+        matches!(
+            self,
+            IdempotencyClaim::Acquired | IdempotencyClaim::Expired(_)
+        )
     }
 }
 
@@ -1732,11 +1715,16 @@ mod tests {
 
         let listed = store.list_workflows().await.expect("list workflows");
         assert!(
-            listed.iter().any(|(id, name)| id == &wf.id && name == &wf.name),
+            listed
+                .iter()
+                .any(|(id, name)| id == &wf.id && name == &wf.name),
             "listing must contain the saved workflow"
         );
 
-        store.delete_workflow(&wf.id).await.expect("delete workflow");
+        store
+            .delete_workflow(&wf.id)
+            .await
+            .expect("delete workflow");
         let gone = store.get_workflow(&wf.id).await.expect("get after delete");
         assert!(gone.is_none(), "deleted workflow must be absent");
     }
@@ -1773,10 +1761,7 @@ mod tests {
             .await
             .expect("run workflow");
 
-        store
-            .save_run(&wf.id, &result)
-            .await
-            .expect("save run");
+        store.save_run(&wf.id, &result).await.expect("save run");
 
         let stored = store
             .get_run(&result.run_id)
@@ -1812,10 +1797,7 @@ mod tests {
             .expect("secret present");
         assert_eq!(got, "token", "decrypted secret must match plaintext");
 
-        let missing = vault
-            .get_secret(&store, "nope")
-            .await
-            .expect("get missing");
+        let missing = vault.get_secret(&store, "nope").await.expect("get missing");
         assert!(missing.is_none(), "absent id must yield None");
     }
 
@@ -1910,7 +1892,10 @@ mod tests {
         assert_eq!(bound, "run_1", "first writer's run_id wins");
 
         // Unknown key yields None.
-        let missing = store.get_idempotency_key("wf_a", "nope").await.expect("lookup");
+        let missing = store
+            .get_idempotency_key("wf_a", "nope")
+            .await
+            .expect("lookup");
         assert!(missing.is_none());
     }
 
@@ -1973,7 +1958,10 @@ mod tests {
             IdempotencyClaim::Expired(prior) => assert_eq!(prior, "run_X"),
             other => panic!("expected Expired, got {other:?}"),
         }
-        assert!(outcome.should_run(), "Expired must allow the new caller to run");
+        assert!(
+            outcome.should_run(),
+            "Expired must allow the new caller to run"
+        );
     }
 
     #[tokio::test]
@@ -1983,7 +1971,11 @@ mod tests {
             .create_approval("ap1", "run_1", "wf_a", "approve_node", r#"{"x":1}"#)
             .await
             .expect("create");
-        let got = store.get_approval("ap1").await.expect("get").expect("present");
+        let got = store
+            .get_approval("ap1")
+            .await
+            .expect("get")
+            .expect("present");
         assert_eq!(got.status, "pending");
         assert_eq!(got.workflow_id, "wf_a");
 
@@ -2004,7 +1996,11 @@ mod tests {
             .await
             .expect("second decide");
         assert!(!decided, "first-decision-wins must lock the row");
-        let after = store.get_approval("ap1").await.expect("get").expect("present");
+        let after = store
+            .get_approval("ap1")
+            .await
+            .expect("get")
+            .expect("present");
         assert_eq!(after.status, "approved");
         assert_eq!(after.decided_by.as_deref(), Some("ops@example.com"));
     }
@@ -2107,10 +2103,8 @@ mod tests {
         );
 
         // Each node should have at least a Started + Finished pair.
-        let trigger_records: Vec<&StepRecord> = records
-            .iter()
-            .filter(|r| r.node_id == "trigger")
-            .collect();
+        let trigger_records: Vec<&StepRecord> =
+            records.iter().filter(|r| r.node_id == "trigger").collect();
         assert!(
             trigger_records.len() >= 2,
             "trigger must have Started+Finished records: {trigger_records:?}"
@@ -2155,11 +2149,13 @@ mod tests {
     async fn schema_re_init_is_idempotent() {
         // Two connections sharing a file: the second should not fail by
         // re-running migrations.
-        let path = format!(
-            "sqlite:///tmp/a2w_test_{}.db?mode=rwc",
-            std::process::id()
+        let path = format!("sqlite:///tmp/a2w_test_{}.db?mode=rwc", std::process::id());
+        let _ = std::fs::remove_file(
+            path.trim_start_matches("sqlite://")
+                .split('?')
+                .next()
+                .unwrap(),
         );
-        let _ = std::fs::remove_file(path.trim_start_matches("sqlite://").split('?').next().unwrap());
 
         let _first = Store::connect(&path).await.expect("first connect");
         let second = Store::connect(&path).await.expect("second connect");
@@ -2167,7 +2163,12 @@ mod tests {
         // Bumped to v5 with the workflow_references inverse-index (R5 H5).
         assert_eq!(v, 5);
 
-        let _ = std::fs::remove_file(path.trim_start_matches("sqlite://").split('?').next().unwrap());
+        let _ = std::fs::remove_file(
+            path.trim_start_matches("sqlite://")
+                .split('?')
+                .next()
+                .unwrap(),
+        );
     }
 
     #[tokio::test]

@@ -92,11 +92,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 ///
 /// Errors are returned as `401` with a JSON body that mirrors the rest of the
 /// API: `{ "error": "..." }`.
-pub async fn require_api_key(
-    State(cfg): State<AuthConfig>,
-    req: Request,
-    next: Next,
-) -> Response {
+pub async fn require_api_key(State(cfg): State<AuthConfig>, req: Request, next: Next) -> Response {
     let Some(expected) = cfg.api_key.as_ref() else {
         // No key configured → pass everything through.
         return next.run(req).await;

@@ -90,17 +90,17 @@ fn classify(n8n_type: &str) -> Option<NodeKind> {
 
     match n8n_type {
         "n8n-nodes-base.webhook" => Some(NodeKind::WebhookTrigger),
-        "n8n-nodes-base.scheduleTrigger"
-        | "n8n-nodes-base.cron"
-        | "n8n-nodes-base.interval" => Some(NodeKind::ScheduleTrigger),
+        "n8n-nodes-base.scheduleTrigger" | "n8n-nodes-base.cron" | "n8n-nodes-base.interval" => {
+            Some(NodeKind::ScheduleTrigger)
+        }
         "n8n-nodes-base.httpRequest" => Some(NodeKind::HttpRequest),
         "n8n-nodes-base.set" | "n8n-nodes-base.editFields" => Some(NodeKind::Transform),
         "n8n-nodes-base.merge" => Some(NodeKind::Merge),
         "n8n-nodes-base.if" => Some(NodeKind::Branch),
         "n8n-nodes-base.switch" => Some(NodeKind::Switch),
-        "n8n-nodes-base.code"
-        | "n8n-nodes-base.function"
-        | "n8n-nodes-base.functionItem" => Some(NodeKind::CodeStep),
+        "n8n-nodes-base.code" | "n8n-nodes-base.function" | "n8n-nodes-base.functionItem" => {
+            Some(NodeKind::CodeStep)
+        }
         "n8n-nodes-base.noOp" => Some(NodeKind::Transform),
         _ => None,
     }
@@ -109,10 +109,7 @@ fn classify(n8n_type: &str) -> Option<NodeKind> {
 /// Whether the type is one of the n8n "Set"/"Edit Fields" variants (which map
 /// to `transform` with extracted assignments rather than a bare passthrough).
 fn is_set_type(n8n_type: &str) -> bool {
-    matches!(
-        n8n_type,
-        "n8n-nodes-base.set" | "n8n-nodes-base.editFields"
-    )
+    matches!(n8n_type, "n8n-nodes-base.set" | "n8n-nodes-base.editFields")
 }
 
 /// Build A2W `http_request` params from an n8n httpRequest node.
@@ -189,9 +186,8 @@ fn build_set(parameters: &Value, node_name: &str, warnings: &mut Vec<ImportWarni
                         entry.get("name").and_then(Value::as_str),
                         entry.get("value"),
                     ) {
-                        set.entry(name.to_string()).or_insert_with(|| {
-                            translate_value(value, node_name, warnings)
-                        });
+                        set.entry(name.to_string())
+                            .or_insert_with(|| translate_value(value, node_name, warnings));
                     }
                 }
             }
@@ -267,10 +263,7 @@ fn best_effort_params(
     if let Some(kind) = kind {
         if let Value::Object(map) = &mut translated {
             // Tag non-trivial structural mappings for traceability.
-            if matches!(
-                kind,
-                NodeKind::Merge | NodeKind::Branch | NodeKind::Switch
-            ) {
+            if matches!(kind, NodeKind::Merge | NodeKind::Branch | NodeKind::Switch) {
                 map.entry("_original_type".to_string())
                     .or_insert(Value::Null);
             }

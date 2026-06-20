@@ -129,7 +129,10 @@ struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0 }
+        Self {
+            src: src.as_bytes(),
+            pos: 0,
+        }
     }
     fn peek(&self) -> Option<u8> {
         self.src.get(self.pos).copied()
@@ -291,15 +294,16 @@ impl<'a> Lexer<'a> {
             b'0'..=b'9' => {
                 let mut s = String::new();
                 while let Some(b) = self.peek() {
-                    if b.is_ascii_digit() || b == b'.' || b == b'e' || b == b'E' || b == b'-'
+                    if b.is_ascii_digit()
+                        || b == b'.'
+                        || b == b'e'
+                        || b == b'E'
+                        || b == b'-'
                         || b == b'+'
                     {
                         // Stop if minus/plus follows a non-digit/e (so 1-2 isn't read as 1, -2).
                         if (b == b'-' || b == b'+')
-                            && !matches!(
-                                s.bytes().last(),
-                                Some(b'e') | Some(b'E')
-                            )
+                            && !matches!(s.bytes().last(), Some(b'e') | Some(b'E'))
                         {
                             break;
                         }
@@ -319,9 +323,7 @@ impl<'a> Lexer<'a> {
                 if !n.is_finite() {
                     return Err(ExprError::Parse {
                         offset: start,
-                        message: format!(
-                            "number literal '{s}' is not finite (overflow / NaN)"
-                        ),
+                        message: format!("number literal '{s}' is not finite (overflow / NaN)"),
                     });
                 }
                 Ok(Some((Token::Number(n), start)))
@@ -716,9 +718,7 @@ fn as_number(v: &Value) -> Result<f64, ExprError> {
             .trim()
             .parse::<f64>()
             .map_err(|_| ExprError::Eval(format!("cannot coerce string '{s}' to number"))),
-        _ => Err(ExprError::Eval(format!(
-            "cannot coerce {v} to number"
-        ))),
+        _ => Err(ExprError::Eval(format!("cannot coerce {v} to number"))),
     }
 }
 
@@ -798,9 +798,8 @@ fn eval(e: &Expr, item: &Value) -> Result<Value, ExprError> {
 }
 
 fn call_builtin(name: &str, args: &[Expr], item: &Value) -> Result<Value, ExprError> {
-    let eval_args = |a: &[Expr]| -> Result<Vec<Value>, ExprError> {
-        a.iter().map(|e| eval(e, item)).collect()
-    };
+    let eval_args =
+        |a: &[Expr]| -> Result<Vec<Value>, ExprError> { a.iter().map(|e| eval(e, item)).collect() };
     match name {
         "length" => {
             let argv = eval_args(args)?;
@@ -1024,10 +1023,7 @@ mod tests {
             eval_str("contains($.tags, \"admin\")", &v).unwrap(),
             json!(true)
         );
-        assert_eq!(
-            eval_str("upper($.name)", &v).unwrap(),
-            json!("ALICE")
-        );
+        assert_eq!(eval_str("upper($.name)", &v).unwrap(), json!("ALICE"));
         assert_eq!(
             eval_str("if($.age > 18, \"adult\", \"minor\")", &v).unwrap(),
             json!("adult")
