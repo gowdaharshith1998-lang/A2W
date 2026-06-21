@@ -148,28 +148,34 @@ async fn whole_program_validate_run_verify_promote_search() {
             node.params = json!({ "set": { "wrong": 1 } });
         }
     }
-    let broken_plan = VerificationPlan::new("escalate")
-        .with_spec(WorkflowSpec {
-            input: alerts(9),
-            assertions: vec![
-                SpecAssertion::OutputCount {
-                    op: CountOp::Eq,
-                    count: 3,
-                },
-                SpecAssertion::EveryItemFieldEquals {
+    // Fitness and holdout are DISJOINT input sets, both encoding the intent
+    // (high-priority alerts get escalated:true). The search optimizes fitness;
+    // the winner is certified on the holdout.
+    let plan_for = |input: Vec<Value>| {
+        VerificationPlan::new("escalate")
+            .with_spec(WorkflowSpec {
+                input: input.clone(),
+                assertions: vec![SpecAssertion::EveryItemFieldEquals {
                     path: "/escalated".to_string(),
                     value: json!(true),
-                },
-            ],
-        })
-        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
-            base_input: alerts(9),
-            passing_extra: vec![json!({ "id": 1000, "priority": "high" })],
-            per_item: 1,
-        }]))
-        .with_metamorphic(MetamorphicSuite::standard(alerts(9)));
-    let seed_score = verify(&harness, &broken, &broken_plan).await.unwrap().score();
-    assert!(seed_score < 1.0, "broken seed must be imperfect");
+                }],
+            })
+            .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
+                base_input: input,
+                passing_extra: vec![json!({ "id": 9001, "priority": "high" })],
+                per_item: 1,
+            }]))
+    };
+    // alerts(9) and a separately-constructed disjoint set for the holdout.
+    let fitness_plan = plan_for(alerts(9));
+    let holdout_plan = plan_for(
+        (100..112)
+            .map(|i| json!({ "id": i, "priority": if i % 2 == 0 { "high" } else { "low" } }))
+            .collect(),
+    );
+
+    let seed_holdout = verify(&harness, &broken, &holdout_plan).await.unwrap().score();
+    assert!(seed_holdout < 1.0, "broken seed must be imperfect on the holdout");
 
     let ops: Vec<Box<dyn Mutation>> = vec![
         Box::new(SetTransformField {
@@ -182,26 +188,36 @@ async fn whole_program_validate_run_verify_promote_search() {
         }),
         Box::new(InsertPassthrough),
     ];
-    let outcome = evolve(&harness, &broken, &broken_plan, &ops, SearchConfig::default())
-        .await
-        .expect("search");
+    let outcome = evolve(
+        &harness,
+        &broken,
+        &fitness_plan,
+        &holdout_plan,
+        &ops,
+        SearchConfig::default(),
+    )
+    .await
+    .expect("search");
+    // Certified (holdout) improvement — not just fitness.
     assert!(
-        outcome.improved() && outcome.best_score >= 1.0,
-        "search must improve the broken seed {} -> {}",
-        outcome.initial_score,
-        outcome.best_score
+        outcome.improved_on_holdout() && outcome.best_holdout_score >= 1.0,
+        "search must improve the CERTIFIED score {} -> {}",
+        outcome.initial_holdout_score,
+        outcome.best_holdout_score
     );
+    assert!(!outcome.overfit(), "legit improvement: no overfit gap ({})", outcome.overfit_gap);
 
-    // The repaired workflow is valid and itself promotable — the loop closes.
+    // The repaired workflow is valid and itself promotable — gated on the
+    // HOLDOUT report (never the fitness report).
     assert!(a2w_validator::validate(&outcome.best_workflow).is_valid);
-    let repaired_confidence = outcome.best_report.clone();
-    assert!(repaired_confidence.meets(lib.threshold()));
+    let certified = outcome.best_holdout_report.clone();
+    assert!(certified.meets(lib.threshold()));
     lib.promote(
         "route high-priority alerts to escalation (evolved)",
         outcome.best_workflow,
         "escalate",
-        &repaired_confidence,
+        &certified,
     )
-    .expect("evolved workflow promotes");
+    .expect("evolved workflow promotes on its holdout report");
     assert_eq!(lib.len(), 2, "both the original and evolved skills are stored");
 }

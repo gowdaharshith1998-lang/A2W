@@ -49,28 +49,64 @@ impl Default for SearchConfig {
 }
 
 /// The result of a search run.
+///
+/// The search **selects** by fitness but is **certified** on the holdout.
+/// `best_holdout_score` is the number a caller should trust and report;
+/// `best_fitness_score` is what the search optimized against and must never be
+/// presented as independent evidence of correctness (that would be Goodhart's
+/// law: a measure that became a target stops measuring). `overfit_gap` makes
+/// any divergence between the two explicit.
 #[derive(Debug, Clone)]
 pub struct SearchOutcome {
-    /// Fitness of the seed workflow.
-    pub initial_score: f64,
-    /// Fitness of the best workflow found.
-    pub best_score: f64,
-    /// The best workflow found (the seed itself if nothing improved on it).
+    /// Seed fitness score (selection metric).
+    pub initial_fitness_score: f64,
+    /// Seed holdout score (certification metric).
+    pub initial_holdout_score: f64,
+    /// Fitness score of the selected winner (what the search maximized).
+    pub best_fitness_score: f64,
+    /// **Certified** holdout score of the selected winner — the honest number.
+    pub best_holdout_score: f64,
+    /// `best_fitness_score - best_holdout_score`. `> 0` means the winner scored
+    /// better on the metric it was optimized against than on the independent
+    /// holdout — i.e. some of the gain was overfitting, not real correctness.
+    pub overfit_gap: f64,
+    /// The selected winner (the seed itself if nothing improved its fitness).
     pub best_workflow: Workflow,
-    /// The confidence report for the best workflow (the evidence behind the
-    /// score — pass this straight to M4 promotion).
-    pub best_report: ConfidenceReport,
-    /// Total distinct candidates scored across all generations.
+    /// The **holdout** confidence report — the certification evidence. Pass
+    /// THIS to M4 promotion (never the fitness report).
+    pub best_holdout_report: ConfidenceReport,
+    /// The fitness confidence report — selection evidence, for diagnostics only.
+    pub best_fitness_report: ConfidenceReport,
+    /// Total distinct candidates scored against the fitness plan.
     pub candidates_evaluated: usize,
-    /// Generations actually run (may stop early on a perfect score).
+    /// Generations actually run (may stop early on a perfect fitness score).
     pub generations_run: usize,
 }
 
 impl SearchOutcome {
-    /// Whether the search strictly improved on the seed.
+    /// The number a caller should trust: the certified holdout score.
     #[must_use]
-    pub fn improved(&self) -> bool {
-        self.best_score > self.initial_score
+    pub fn certified_score(&self) -> f64 {
+        self.best_holdout_score
+    }
+
+    /// Whether the search strictly improved the **certified** (holdout) score.
+    #[must_use]
+    pub fn improved_on_holdout(&self) -> bool {
+        self.best_holdout_score > self.initial_holdout_score
+    }
+
+    /// Whether the search strictly improved the fitness (selection) score.
+    #[must_use]
+    pub fn improved_on_fitness(&self) -> bool {
+        self.best_fitness_score > self.initial_fitness_score
+    }
+
+    /// Whether the winner overfit the fitness set (fitness gain not reflected
+    /// in the holdout).
+    #[must_use]
+    pub fn overfit(&self) -> bool {
+        self.overfit_gap > 1e-9
     }
 }
 
@@ -83,27 +119,36 @@ struct Scored {
     canonical: String,
 }
 
-/// Run a deterministic beam search to improve `seed` against `plan`.
+/// Run a deterministic beam search to improve `seed`, **selecting** by the
+/// `fitness` plan and **certifying** the winner on a disjoint `holdout` plan.
 ///
-/// `plan.observe_node` must remain a node in every candidate — the supplied
-/// operators are expected to preserve it (freeze it where needed). The fitness
-/// is `plan`-derived M3 confidence; ties prefer fewer nodes (parsimony), then
-/// the lexicographically-smallest canonical form (full determinism).
+/// This is the anti-Goodhart split (F2): the search optimizes the fitness
+/// metric, so the fitness score is no longer independent evidence about the
+/// winner. The winner is therefore re-scored on a holdout the fitness function
+/// never saw during ranking, and the *holdout* score is the certified result.
+///
+/// Both plans' `observe_node`s must remain present in every candidate (the
+/// supplied operators are expected to preserve them). Ranking is by fitness
+/// (desc), then parsimony (fewer nodes), then canonical form (asc) — a total,
+/// reproducible order. No RNG: reruns are byte-identical.
 ///
 /// # Errors
-/// [`VerifyError`] if the seed cannot be scored (e.g. the observe node is
-/// absent, or the seed is unrunnable).
+/// [`VerifyError`] if the seed or the winner cannot be scored against either
+/// plan (e.g. an observe node is absent, or the workflow is unrunnable).
 pub async fn evolve(
     harness: &VerificationHarness,
     seed: &Workflow,
-    plan: &VerificationPlan,
+    fitness: &VerificationPlan,
+    holdout: &VerificationPlan,
     operators: &[Box<dyn Mutation>],
     config: SearchConfig,
 ) -> Result<SearchOutcome, VerifyError> {
-    let seed_scored = score(harness, seed, plan).await?;
-    let initial_score = seed_scored.score;
+    // Seed baselines on BOTH plans (holdout for honest "did we improve?").
+    let seed_fitness = score(harness, seed, fitness).await?;
+    let initial_fitness_score = seed_fitness.score;
+    let initial_holdout_score = verify(harness, seed, holdout).await?.score();
 
-    let mut best = seed_scored;
+    let mut best = seed_fitness;
     let mut beam: Vec<Workflow> = vec![seed.clone()];
     let mut seen: BTreeSet<String> = BTreeSet::new();
     seen.insert(best.canonical.clone());
@@ -123,8 +168,11 @@ pub async fn evolve(
                     if !a2w_validator::validate(&cand).is_valid {
                         continue;
                     }
-                    // The observe node must survive.
-                    if !cand.nodes.iter().any(|n| n.id == plan.observe_node) {
+                    // BOTH observe nodes must survive so the winner is
+                    // certifiable on the holdout.
+                    if !cand.nodes.iter().any(|n| n.id == fitness.observe_node)
+                        || !cand.nodes.iter().any(|n| n.id == holdout.observe_node)
+                    {
                         continue;
                     }
                     let canon = canonical_of(&cand);
@@ -145,10 +193,11 @@ pub async fn evolve(
             break; // converged: no new candidates
         }
 
-        // 2. Score every candidate (zero-token, deterministic).
+        // 2. Score every candidate against the FITNESS plan only. The holdout
+        //    is never consulted during ranking — that is the whole point.
         let mut scored: Vec<Scored> = Vec::with_capacity(raw.len());
         for cand in raw {
-            let s = score(harness, &cand, plan).await?;
+            let s = score(harness, &cand, fitness).await?;
             seen.insert(s.canonical.clone());
             candidates_evaluated += 1;
             scored.push(s);
@@ -164,7 +213,7 @@ pub async fn evolve(
                 .then_with(|| a.canonical.cmp(&b.canonical))
         });
 
-        // 4. Update the global best.
+        // 4. Update the global best (by fitness).
         if let Some(top) = scored.first() {
             if better(top, &best) {
                 best = clone_scored(top);
@@ -178,17 +227,27 @@ pub async fn evolve(
             .map(|s| s.workflow)
             .collect();
 
-        // Early stop on a perfect score.
+        // Early stop on a perfect FITNESS score.
         if best.score >= 1.0 {
             break;
         }
     }
 
+    // Certify the fitness-winner on the holdout (the disjoint, never-optimized
+    // evidence). This is the number we report.
+    let best_fitness_score = best.score;
+    let holdout_report = verify(harness, &best.workflow, holdout).await?;
+    let best_holdout_score = holdout_report.score();
+
     Ok(SearchOutcome {
-        initial_score,
-        best_score: best.score,
+        initial_fitness_score,
+        initial_holdout_score,
+        best_fitness_score,
+        best_holdout_score,
+        overfit_gap: best_fitness_score - best_holdout_score,
         best_workflow: best.workflow,
-        best_report: best.report,
+        best_holdout_report: holdout_report,
+        best_fitness_report: best.report,
         candidates_evaluated,
         generations_run,
     })

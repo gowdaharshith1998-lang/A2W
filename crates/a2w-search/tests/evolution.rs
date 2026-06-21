@@ -1,12 +1,13 @@
-//! M5 integration: search measurably improves a seed's confidence score, and
-//! every candidate it generates is M1-valid by construction.
+//! M5 / F2 integration: search selects by fitness, certifies on a disjoint
+//! holdout, and surfaces (never hides) any overfit gap. Every candidate it
+//! generates is M1-valid by construction, and the search is deterministic.
 
 use a2w_ir::{Connection, Node, NodeKind, Workflow, SCHEMA_VERSION};
 use a2w_search::{
-    evolve, InsertPassthrough, Mutation, RemovePassthrough, SearchConfig, SetTransformField,
+    evolve, InsertPassthrough, Mutation, SearchConfig, SetTransformField,
 };
 use a2w_verify::{
-    CountOp, MetamorphicSuite, SpecAssertion, VerificationHarness, VerificationPlan, WorkflowSpec,
+    GoldenFixture, MatchMode, SpecAssertion, VerificationHarness, VerificationPlan, WorkflowSpec,
 };
 use serde_json::{json, Value};
 
@@ -20,105 +21,135 @@ fn wf(id: &str, nodes: Vec<Node>, connections: Vec<Connection>) -> Workflow {
     }
 }
 
-/// A seed that does NOT satisfy the spec: it tags items with the wrong field.
-/// The held-out spec requires every output item to have `/tagged == true`.
-fn seed_workflow() -> Workflow {
+/// `trigger -> total(Transform)`. The total node's `set` is supplied by caller;
+/// an empty set means "no total field yet" (the broken seed).
+fn total_workflow(id: &str, set: Value) -> Workflow {
     let trigger = Node::new("trigger", NodeKind::WebhookTrigger);
-    let mut tag = Node::new("tag", NodeKind::Transform);
-    tag.params = json!({ "set": { "irrelevant": 1 } }); // missing `tagged`
+    let mut total = Node::new("total", NodeKind::Transform);
+    total.params = json!({ "set": set });
     wf(
-        "wf_seed",
-        vec![trigger, tag],
-        vec![Connection::new("trigger", 0, "tag")],
+        id,
+        vec![trigger, total],
+        vec![Connection::new("trigger", 0, "total")],
     )
 }
 
-fn held_out_plan() -> VerificationPlan {
-    let input: Vec<Value> = (0..4).map(|i| json!({ "id": i })).collect();
-    VerificationPlan::new("tag")
-        .with_spec(WorkflowSpec {
-            input: input.clone(),
-            assertions: vec![
-                SpecAssertion::OutputCount {
-                    op: CountOp::Eq,
-                    count: 4,
-                },
-                SpecAssertion::EveryItemFieldEquals {
-                    path: "/tagged".to_string(),
-                    value: json!(true),
-                },
-            ],
-        })
-        .with_metamorphic(MetamorphicSuite::standard(input))
+/// The seed: a workflow that does NOT compute `total` at all.
+fn broken_seed() -> Workflow {
+    total_workflow("wf_seed", json!({}))
 }
 
-fn operators() -> Vec<Box<dyn Mutation>> {
+/// Golden fixture: `{price, qty}` → `{price, qty, total: price*qty}`.
+///
+/// `total` is expected as a float because the expression engine evaluates
+/// arithmetic in f64 (so `5 * 3` renders as `15.0`, a JSON float).
+fn golden(name: &str, price: i64, qty: i64) -> GoldenFixture {
+    GoldenFixture {
+        name: name.to_string(),
+        input: vec![json!({ "price": price, "qty": qty })],
+        expected: vec![json!({ "price": price, "qty": qty, "total": (price * qty) as f64 })],
+        match_mode: MatchMode::Exact,
+    }
+}
+
+/// Operators whose vocabulary contains the CORRECT expression plus decoys.
+fn rich_operators() -> Vec<Box<dyn Mutation>> {
     vec![
         Box::new(SetTransformField {
-            // The vocabulary includes the field the spec wants — plus noise the
-            // search must reject in favour of the one that improves fitness.
             vocabulary: vec![
-                ("tagged".to_string(), json!(true)),
-                ("tagged".to_string(), json!(false)),
-                ("noise".to_string(), json!("x")),
+                ("total".to_string(), json!("${{ $.price * $.qty }}")), // correct
+                ("total".to_string(), json!(0)),                        // decoy constant
+                ("noise".to_string(), json!("x")),                      // decoy field
             ],
             frozen: vec![],
         }),
         Box::new(InsertPassthrough),
-        Box::new(RemovePassthrough { frozen: vec!["tag".to_string()] }),
     ]
 }
 
 #[tokio::test]
-async fn search_improves_seed_confidence_on_held_out_task() {
+async fn search_improves_certified_holdout_score() {
     let harness = VerificationHarness::new();
-    let seed = seed_workflow();
-    let plan = held_out_plan();
-    let ops = operators();
+    let seed = broken_seed();
 
-    // Sanity: the seed genuinely fails the spec (so there's room to improve).
-    let seed_report = a2w_verify::verify(&harness, &seed, &plan).await.unwrap();
-    assert!(
-        seed_report.score() < 1.0,
-        "seed should be imperfect to start:\n{}",
-        seed_report.summary()
-    );
+    // Fitness and holdout are DISJOINT inputs, both encoding the real intent
+    // (total = price*qty). The correct expression satisfies both.
+    let fitness = VerificationPlan::new("total").with_golden(vec![golden("fit", 10, 2)]);
+    let holdout = VerificationPlan::new("total").with_golden(vec![golden("hold", 5, 3)]);
 
-    let outcome = evolve(&harness, &seed, &plan, &ops, SearchConfig::default())
+    let outcome = evolve(&harness, &seed, &fitness, &holdout, &rich_operators(), SearchConfig::default())
         .await
-        .expect("search runs");
+        .expect("search");
 
+    // The certified (holdout) score improved and is perfect.
     assert!(
-        outcome.improved(),
-        "search must measurably improve the score: {} -> {}",
-        outcome.initial_score,
-        outcome.best_score
+        outcome.improved_on_holdout(),
+        "certified score must improve: {} -> {}",
+        outcome.initial_holdout_score,
+        outcome.best_holdout_score
     );
-    assert!(
-        outcome.best_score >= 1.0,
-        "search should reach a perfect score by adding the required field; got {} (\n{}\n)",
-        outcome.best_score,
-        outcome.best_report.summary()
-    );
+    assert!(outcome.best_holdout_score >= 1.0, "certified holdout score perfect");
+    assert!(outcome.best_fitness_score >= 1.0);
+    // Legit improvement: fitness gains are reflected in the holdout → no overfit.
+    assert!(!outcome.overfit(), "overfit_gap should be ~0, got {}", outcome.overfit_gap);
 
-    // The improved workflow actually sets `tagged: true`.
-    let best_out = harness
-        .observe(&outcome.best_workflow, "tag", vec![json!({ "id": 99 })])
+    // The winner really computes price*qty.
+    let out = harness
+        .observe(&outcome.best_workflow, "total", vec![json!({ "price": 7, "qty": 6 })])
         .await
         .unwrap();
-    assert_eq!(best_out.len(), 1);
-    assert_eq!(best_out[0]["tagged"], json!(true));
-
-    // The best workflow is M1-valid.
+    assert_eq!(out[0]["total"], json!(42.0)); // expression arithmetic is f64
     assert!(a2w_validator::validate(&outcome.best_workflow).is_valid);
 }
 
 #[tokio::test]
+async fn search_overfit_is_surfaced_not_hidden() {
+    // GOODHART setup: the fitness metric has a GAP — it only checks that a
+    // `/total` field is PRESENT, not its value. The operator vocabulary can
+    // only set a constant. The search can hit a perfect FITNESS score by
+    // setting total=0, which is wrong. The holdout (exact golden) catches it.
+    let harness = VerificationHarness::new();
+    let seed = broken_seed();
+
+    let fitness = VerificationPlan::new("total").with_spec(WorkflowSpec {
+        input: vec![json!({ "price": 10, "qty": 2 })],
+        assertions: vec![SpecAssertion::EveryItemHasField {
+            path: "/total".to_string(), // GAP: presence only, not the value
+        }],
+    });
+    let holdout = VerificationPlan::new("total").with_golden(vec![golden("hold", 5, 3)]);
+
+    // Impoverished operator: can ONLY set total to a constant (cannot express
+    // price*qty), so it can satisfy the gappy fitness but not the holdout.
+    let ops: Vec<Box<dyn Mutation>> = vec![Box::new(SetTransformField {
+        vocabulary: vec![("total".to_string(), json!(0))],
+        frozen: vec![],
+    })];
+
+    let outcome = evolve(&harness, &seed, &fitness, &holdout, &ops, SearchConfig::default())
+        .await
+        .expect("search");
+
+    // The search "won" on the metric it optimized...
+    assert!(outcome.best_fitness_score >= 1.0, "fitness hit its (gappy) ceiling");
+    assert!(outcome.improved_on_fitness(), "fitness improved from the seed");
+    // ...but the CERTIFIED (holdout) score reveals it is not actually correct.
+    assert!(
+        outcome.best_holdout_score < 1.0,
+        "holdout must reveal the gap; got {}",
+        outcome.best_holdout_score
+    );
+    assert!(outcome.overfit(), "overfit_gap must be surfaced: {}", outcome.overfit_gap);
+    // The honest report we'd hand to promotion is the holdout one.
+    assert!(outcome.best_holdout_report.score() < 1.0);
+    // And the certified metric did NOT actually improve — the gain was illusory.
+    assert!(!outcome.improved_on_holdout());
+}
+
+#[tokio::test]
 async fn every_generated_candidate_is_valid_by_construction() {
-    // Drive the operators directly and assert every emitted candidate passes
-    // M1 — the structural guarantee the search relies on.
-    let seed = seed_workflow();
-    let ops = operators();
+    let seed = broken_seed();
+    let ops = rich_operators();
     let mut total = 0usize;
     for op in &ops {
         for cand in op.apply(&seed) {
@@ -137,19 +168,20 @@ async fn every_generated_candidate_is_valid_by_construction() {
 #[tokio::test]
 async fn search_is_deterministic() {
     let harness = VerificationHarness::new();
-    let seed = seed_workflow();
-    let plan = held_out_plan();
+    let seed = broken_seed();
+    let fitness = VerificationPlan::new("total").with_golden(vec![golden("fit", 10, 2)]);
+    let holdout = VerificationPlan::new("total").with_golden(vec![golden("hold", 5, 3)]);
 
-    let a = evolve(&harness, &seed, &plan, &operators(), SearchConfig::default())
+    let a = evolve(&harness, &seed, &fitness, &holdout, &rich_operators(), SearchConfig::default())
         .await
         .unwrap();
-    let b = evolve(&harness, &seed, &plan, &operators(), SearchConfig::default())
+    let b = evolve(&harness, &seed, &fitness, &holdout, &rich_operators(), SearchConfig::default())
         .await
         .unwrap();
 
-    assert_eq!(a.best_score, b.best_score);
+    assert_eq!(a.best_fitness_score, b.best_fitness_score);
+    assert_eq!(a.best_holdout_score, b.best_holdout_score);
     assert_eq!(a.candidates_evaluated, b.candidates_evaluated);
-    // Byte-identical best workflow across runs.
     assert_eq!(
         serde_json::to_string(&a.best_workflow).unwrap(),
         serde_json::to_string(&b.best_workflow).unwrap()
@@ -159,20 +191,16 @@ async fn search_is_deterministic() {
 #[tokio::test]
 async fn search_on_already_perfect_seed_does_not_regress() {
     let harness = VerificationHarness::new();
-    // A seed that already satisfies the spec.
-    let trigger = Node::new("trigger", NodeKind::WebhookTrigger);
-    let mut tag = Node::new("tag", NodeKind::Transform);
-    tag.params = json!({ "set": { "tagged": true } });
-    let good = wf(
-        "wf_good",
-        vec![trigger, tag],
-        vec![Connection::new("trigger", 0, "tag")],
-    );
-    let plan = held_out_plan();
-    let outcome = evolve(&harness, &good, &plan, &operators(), SearchConfig::default())
+    // A seed that already computes total correctly.
+    let good = total_workflow("wf_good", json!({ "total": "${{ $.price * $.qty }}" }));
+    let fitness = VerificationPlan::new("total").with_golden(vec![golden("fit", 10, 2)]);
+    let holdout = VerificationPlan::new("total").with_golden(vec![golden("hold", 5, 3)]);
+
+    let outcome = evolve(&harness, &good, &fitness, &holdout, &rich_operators(), SearchConfig::default())
         .await
         .unwrap();
-    assert_eq!(outcome.initial_score, 1.0);
-    assert_eq!(outcome.best_score, 1.0);
-    assert!(!outcome.improved(), "nothing to improve on a perfect seed");
+    assert_eq!(outcome.initial_fitness_score, 1.0);
+    assert_eq!(outcome.best_holdout_score, 1.0);
+    assert!(!outcome.improved_on_holdout(), "nothing to improve on a perfect seed");
+    assert!(!outcome.overfit());
 }
