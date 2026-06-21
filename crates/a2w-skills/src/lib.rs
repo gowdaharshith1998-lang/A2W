@@ -32,14 +32,15 @@ pub enum SkillError {
     Invalid(ValidationReport),
     /// The confidence report did not clear the promotion threshold.
     #[error(
-        "below promotion threshold (score {score:.2}, {metamorphic_passed} metamorphic relation(s) held); \
-         promotion is gated on verification evidence, not execution"
+        "below promotion threshold (outcome score {score:.2}, {semantic_relations_passed} semantic \
+         relation(s) held); promotion is gated on OUTCOME evidence, not execution and not \
+         engine-invariants"
     )]
     BelowThreshold {
-        /// The report's pass ratio.
+        /// The report's outcome pass ratio.
         score: f64,
-        /// How many metamorphic relations held.
-        metamorphic_passed: usize,
+        /// How many spec-derived semantic relations held.
+        semantic_relations_passed: usize,
         /// The calibrated summary, for diagnostics.
         summary: String,
     },

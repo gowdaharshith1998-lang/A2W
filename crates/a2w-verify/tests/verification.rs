@@ -7,7 +7,8 @@
 use a2w_ir::{Connection, Node, NodeKind, Workflow, SCHEMA_VERSION};
 use a2w_verify::{
     cross_check_oracle, verify, CheckCategory, CountOp, GoldenFixture, MatchMode, MetamorphicSuite,
-    SpecAssertion, Threshold, VerificationHarness, VerificationPlan, WorkflowSpec,
+    SemanticRelation, SemanticSuite, SpecAssertion, Threshold, VerificationHarness,
+    VerificationPlan, WorkflowSpec,
 };
 use serde_json::{json, Value};
 
@@ -83,17 +84,26 @@ async fn clean_per_item_map_clears_threshold() {
             expected: vec![json!({ "id": 7, "tagged": true })],
             match_mode: MatchMode::Exact,
         }])
+        // Outcome evidence: a semantic relation encoding "tagging is a pure
+        // map" (count conserved).
+        .with_semantic(SemanticSuite::new(vec![SemanticRelation::CountConservation {
+            input: seed_n(5),
+        }]))
+        // Engine-invariants: NOT outcome evidence; they assert engine guarantees.
         .with_metamorphic(MetamorphicSuite::standard(seed_n(6)));
 
     let report = verify(&harness, &workflow, &plan).await.expect("verify");
+    // The OUTCOME score is over outcome evidence only (spec + golden + semantic).
     assert_eq!(report.score(), 1.0, "report: {}", report.summary());
     assert!(
         report.meets(&Threshold::default()),
         "clean workflow should clear the threshold:\n{}",
         report.summary()
     );
-    // It cites multiple metamorphic relations.
-    assert!(report.passed_in(CheckCategory::Metamorphic) >= 3);
+    // It cites outcome evidence (≥1 semantic relation) AND holds engine invariants.
+    assert!(report.passed_in(CheckCategory::SemanticRelation) >= 1);
+    assert!(report.passed_in(CheckCategory::EngineInvariant) >= 3);
+    assert!(report.engine_invariants_held());
 }
 
 #[tokio::test]
@@ -379,6 +389,94 @@ async fn rerun_identity_catches_nondeterminism() {
             .any(|f| f.name == "rerun_identity"),
         "rerun_identity must catch the injected non-determinism:\n{}",
         report.summary()
+    );
+}
+
+/// F1 DoD: a workflow that derives `total` from the WRONG input field passes
+/// every engine-invariant (it is a deterministic per-item map) but FAILS a
+/// spec-derived semantic scaling relation — proving semantic relations catch
+/// logic faults engine-invariants structurally cannot, and that the report does
+/// not let "engine-verified" read as "outcome-verified".
+#[tokio::test]
+async fn semantic_relation_catches_wrong_field_engine_invariants_cannot() {
+    fn priced_workflow(id: &str, multiplicand_field: &str) -> Workflow {
+        let mut total = Node::new("total", NodeKind::Transform);
+        // total = <field> * qty. The CORRECT field is `price`.
+        total.params = json!({
+            "set": { "total": format!("${{{{ $.{multiplicand_field} * $.qty }}}}") }
+        });
+        wf(
+            id,
+            vec![trigger(), total],
+            vec![Connection::new("trigger", 0, "total")],
+        )
+    }
+
+    let base_input: Vec<Value> = vec![
+        json!({ "price": 10, "cost": 7, "qty": 2 }),
+        json!({ "price": 5, "cost": 3, "qty": 4 }),
+        json!({ "price": 8, "cost": 8, "qty": 1 }),
+    ];
+
+    let harness = VerificationHarness::new();
+    // Intent: total is proportional to `price`. Authored from intent, not the WF.
+    let scaling = SemanticRelation::FieldScaling {
+        in_field: "/price".to_string(),
+        out_field: "/total".to_string(),
+        factor: 2.0,
+        base_input: base_input.clone(),
+    };
+    let plan = VerificationPlan::new("total")
+        .with_semantic(SemanticSuite::new(vec![scaling]))
+        .with_metamorphic(MetamorphicSuite::standard(base_input.clone()));
+
+    // CORRECT workflow (total from price): semantic relation holds, outcome verified-ish.
+    let correct = priced_workflow("wf_priced_ok", "price");
+    let ok = verify(&harness, &correct, &plan).await.expect("verify ok");
+    assert!(
+        ok.engine_invariants_held(),
+        "correct WF holds engine invariants:\n{}",
+        ok.summary()
+    );
+    assert_eq!(
+        ok.passed_in(CheckCategory::SemanticRelation),
+        1,
+        "scaling relation holds for the correct field:\n{}",
+        ok.summary()
+    );
+
+    // BUGGY workflow (total from `cost`): a classic wrong-field generator bug.
+    let buggy = priced_workflow("wf_priced_bug", "cost");
+    let bad = verify(&harness, &buggy, &plan).await.expect("verify buggy");
+
+    // Engine-invariants ALL hold — the bug is invisible to them.
+    assert!(
+        bad.engine_invariants_held(),
+        "buggy WF still satisfies every engine invariant:\n{}",
+        bad.summary()
+    );
+    // But the semantic scaling relation FAILS — the outcome is caught.
+    assert!(
+        bad.failures()
+            .iter()
+            .any(|f| f.category == CheckCategory::SemanticRelation),
+        "the wrong-field bug must be caught by a semantic relation:\n{}",
+        bad.summary()
+    );
+    assert!(bad.score() < 1.0, "outcome score must reflect the fault:\n{}", bad.summary());
+    assert!(!bad.meets(&Threshold::default()));
+
+    // And an engine-invariant-ONLY report never clears an outcome threshold.
+    let engine_only = VerificationPlan::new("total")
+        .with_metamorphic(MetamorphicSuite::standard(base_input));
+    let eo = verify(&harness, &buggy, &engine_only).await.expect("verify");
+    assert!(eo.engine_invariants_held());
+    assert_eq!(eo.score(), 0.0, "no outcome evidence ⇒ outcome score 0");
+    assert!(!eo.meets(&Threshold::default()));
+    assert!(
+        eo.summary().contains("OUTCOME: UNVERIFIED — engine-verified only"),
+        "summary must not let engine-verification read as outcome-verification:\n{}",
+        eo.summary()
     );
 }
 

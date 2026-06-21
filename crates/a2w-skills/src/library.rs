@@ -15,16 +15,22 @@ use crate::signature::TaskSignature;
 use crate::SkillError;
 
 /// The evidence snapshot recorded at promotion time. Calibrated, not a verdict.
+///
+/// `score` is the **outcome** score (engine-invariants are excluded — they
+/// verify the engine, not the answer). `semantic_relations_passed` is the count
+/// of intent-encoding relations that held; it is the no-oracle outcome signal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceSnapshot {
-    /// Pass ratio at promotion.
+    /// Outcome pass ratio at promotion (over outcome evidence only).
     pub score: f64,
-    /// Total checks that ran.
-    pub checks_total: usize,
-    /// Checks that passed.
-    pub checks_passed: usize,
-    /// Metamorphic relations that held (the no-oracle signal).
-    pub metamorphic_passed: usize,
+    /// Total outcome-evidence checks that ran.
+    pub outcome_total: usize,
+    /// Outcome-evidence checks that passed.
+    pub outcome_passed: usize,
+    /// Spec-derived semantic relations that held (the no-oracle outcome signal).
+    pub semantic_relations_passed: usize,
+    /// Engine invariants that held (engine guarantees, NOT outcome evidence).
+    pub engine_invariants_passed: usize,
     /// Human-readable calibrated summary captured at promotion.
     pub summary: String,
 }
@@ -125,11 +131,12 @@ impl SkillLibrary {
             return Err(SkillError::Invalid(validation));
         }
 
-        // The gate: M3 evidence, not execution.
+        // The gate: M3 OUTCOME evidence, not execution and not engine-invariants.
         if !report.meets(&self.threshold) {
             return Err(SkillError::BelowThreshold {
                 score: report.score(),
-                metamorphic_passed: report.passed_in(a2w_verify::CheckCategory::Metamorphic),
+                semantic_relations_passed: report
+                    .passed_in(a2w_verify::CheckCategory::SemanticRelation),
                 summary: report.summary(),
             });
         }
@@ -138,9 +145,12 @@ impl SkillLibrary {
         let signature = TaskSignature::from_query_and_workflow(query, &workflow);
         let evidence = EvidenceSnapshot {
             score: report.score(),
-            checks_total: report.total(),
-            checks_passed: report.passed(),
-            metamorphic_passed: report.passed_in(a2w_verify::CheckCategory::Metamorphic),
+            outcome_total: report.outcome_total(),
+            outcome_passed: report.outcome_passed(),
+            semantic_relations_passed: report
+                .passed_in(a2w_verify::CheckCategory::SemanticRelation),
+            engine_invariants_passed: report
+                .passed_in(a2w_verify::CheckCategory::EngineInvariant),
             summary: report.summary(),
         };
         let skill = Skill {

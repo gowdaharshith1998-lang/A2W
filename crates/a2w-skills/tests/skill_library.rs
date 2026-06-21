@@ -3,7 +3,8 @@
 use a2w_ir::{Connection, Node, NodeKind, Workflow, SCHEMA_VERSION};
 use a2w_skills::{adapt, compose_sequential, SkillError, SkillLibrary};
 use a2w_verify::{
-    verify, MetamorphicSuite, VerificationHarness, VerificationPlan,
+    verify, MetamorphicSuite, SemanticRelation, SemanticSuite, SpecAssertion, VerificationHarness,
+    VerificationPlan, WorkflowSpec,
 };
 use serde_json::{json, Value};
 
@@ -52,9 +53,25 @@ fn seed(n: usize) -> Vec<Value> {
     (0..n).map(|i| json!({ "id": i, "keep": i % 2 == 0 })).collect()
 }
 
+/// Build a confidence report with real OUTCOME evidence (a spec assertion +
+/// a spec-derived semantic relation) plus engine-invariants. The evidence
+/// holds for both the per-item map and the per-item filter used in these tests:
+/// every output carries `/id`, and appending one intended-passing item
+/// (`keep:true`) adds exactly one output.
 async fn confidence_for(wf: &Workflow, observe: &str) -> a2w_verify::ConfidenceReport {
     let harness = VerificationHarness::new();
     let plan = VerificationPlan::new(observe)
+        .with_spec(WorkflowSpec {
+            input: seed(4),
+            assertions: vec![SpecAssertion::EveryItemHasField {
+                path: "/id".to_string(),
+            }],
+        })
+        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
+            base_input: seed(4),
+            passing_extra: vec![json!({ "id": 1000, "keep": true })],
+            per_item: 1,
+        }]))
         .with_metamorphic(MetamorphicSuite::standard(seed(6)));
     verify(&harness, wf, &plan).await.expect("verify")
 }
@@ -123,8 +140,8 @@ async fn invalid_workflow_cannot_be_promoted() {
     let mut report = a2w_verify::ConfidenceReport::new("wf_bad", "fetch");
     for i in 0..4 {
         report.push(a2w_verify::CheckResult::pass(
-            a2w_verify::CheckCategory::Metamorphic,
-            format!("mr{i}"),
+            a2w_verify::CheckCategory::SemanticRelation,
+            format!("sr{i}"),
             "held",
         ));
     }

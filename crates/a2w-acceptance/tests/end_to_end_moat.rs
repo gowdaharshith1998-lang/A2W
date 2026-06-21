@@ -11,8 +11,8 @@ use a2w_ir::{Connection, Node, NodeKind, Workflow, SCHEMA_VERSION};
 use a2w_search::{evolve, InsertPassthrough, Mutation, SearchConfig, SetTransformField};
 use a2w_skills::SkillLibrary;
 use a2w_verify::{
-    verify, CountOp, MetamorphicSuite, SpecAssertion, VerificationHarness, VerificationPlan,
-    WorkflowSpec,
+    verify, CountOp, MetamorphicSuite, SemanticRelation, SemanticSuite, SpecAssertion,
+    VerificationHarness, VerificationPlan, WorkflowSpec,
 };
 use serde_json::{json, Value};
 
@@ -98,6 +98,13 @@ async fn whole_program_validate_run_verify_promote_search() {
                 },
             ],
         })
+        // Outcome evidence: appending one more high-priority alert escalates
+        // exactly one more item (the router's intent, authored independently).
+        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
+            base_input: alerts(9),
+            passing_extra: vec![json!({ "id": 1000, "priority": "high" })],
+            per_item: 1,
+        }]))
         .with_metamorphic(MetamorphicSuite::standard(alerts(9)));
     let confidence = verify(&harness, &router, &plan).await.expect("verify");
     assert_eq!(
@@ -106,9 +113,11 @@ async fn whole_program_validate_run_verify_promote_search() {
         "router is correct:\n{}",
         confidence.summary()
     );
-    // The report cites real, multiple categories of evidence (not a bare bool).
+    // The report cites real OUTCOME evidence (spec + semantic) AND separately
+    // holds engine-invariants — which are NOT outcome evidence.
     assert!(confidence.passed_in(a2w_verify::CheckCategory::Spec) >= 3);
-    assert!(confidence.passed_in(a2w_verify::CheckCategory::Metamorphic) >= 3);
+    assert!(confidence.passed_in(a2w_verify::CheckCategory::SemanticRelation) >= 1);
+    assert!(confidence.passed_in(a2w_verify::CheckCategory::EngineInvariant) >= 3);
 
     // -- M4: promotion gated on the M3 signal -------------------------------
     let mut lib = SkillLibrary::with_default_threshold();
@@ -142,11 +151,22 @@ async fn whole_program_validate_run_verify_promote_search() {
     let broken_plan = VerificationPlan::new("escalate")
         .with_spec(WorkflowSpec {
             input: alerts(9),
-            assertions: vec![SpecAssertion::EveryItemFieldEquals {
-                path: "/escalated".to_string(),
-                value: json!(true),
-            }],
+            assertions: vec![
+                SpecAssertion::OutputCount {
+                    op: CountOp::Eq,
+                    count: 3,
+                },
+                SpecAssertion::EveryItemFieldEquals {
+                    path: "/escalated".to_string(),
+                    value: json!(true),
+                },
+            ],
         })
+        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
+            base_input: alerts(9),
+            passing_extra: vec![json!({ "id": 1000, "priority": "high" })],
+            per_item: 1,
+        }]))
         .with_metamorphic(MetamorphicSuite::standard(alerts(9)));
     let seed_score = verify(&harness, &broken, &broken_plan).await.unwrap().score();
     assert!(seed_score < 1.0, "broken seed must be imperfect");

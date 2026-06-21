@@ -122,13 +122,13 @@ pub async fn check_rerun_identity(
     let b = harness.observe(wf, observe_node, seed.to_vec()).await?;
     Ok(if a == b {
         CheckResult::pass(
-            CheckCategory::Determinism,
+            CheckCategory::EngineInvariant,
             "rerun_identity",
             format!("two runs produced identical output ({} item(s))", a.len()),
         )
     } else {
         CheckResult::fail(
-            CheckCategory::Determinism,
+            CheckCategory::EngineInvariant,
             "rerun_identity",
             format!(
                 "non-deterministic: run A had {} item(s), run B had {} item(s) \
@@ -154,7 +154,7 @@ pub async fn check_permutation(
     let permuted = harness.observe(wf, observe_node, reversed).await?;
     Ok(if multiset_eq(&base, &permuted) {
         CheckResult::pass(
-            CheckCategory::Metamorphic,
+            CheckCategory::EngineInvariant,
             "permutation_invariance",
             format!(
                 "output multiset unchanged under input reversal ({} item(s))",
@@ -163,7 +163,7 @@ pub async fn check_permutation(
         )
     } else {
         CheckResult::fail(
-            CheckCategory::Metamorphic,
+            CheckCategory::EngineInvariant,
             "permutation_invariance",
             format!(
                 "output multiset changed under input reversal: {} vs {} item(s)",
@@ -198,7 +198,7 @@ pub async fn check_duplication(
     }
     Ok(if multiset_eq(&expected, &scaled) {
         CheckResult::pass(
-            CheckCategory::Metamorphic,
+            CheckCategory::EngineInvariant,
             "duplication_scaling",
             format!(
                 "×{factor} input → ×{factor} output ({} → {} item(s))",
@@ -208,7 +208,7 @@ pub async fn check_duplication(
         )
     } else {
         CheckResult::fail(
-            CheckCategory::Metamorphic,
+            CheckCategory::EngineInvariant,
             "duplication_scaling",
             format!(
                 "×{factor} input did not scale output: expected {} item(s), got {}",
@@ -230,7 +230,7 @@ pub async fn check_additivity(
 ) -> Result<CheckResult, VerifyError> {
     if seed.len() < 2 {
         return Ok(CheckResult::pass(
-            CheckCategory::Metamorphic,
+            CheckCategory::EngineInvariant,
             "additivity",
             "skipped: seed has fewer than 2 items (additivity is trivial)".to_string(),
         ));
@@ -249,7 +249,7 @@ pub async fn check_additivity(
     // Compare multisets via canonicalized counts.
     Ok(if multiset_of(&union) == multiset_of(&out_ab) {
         CheckResult::pass(
-            CheckCategory::Metamorphic,
+            CheckCategory::EngineInvariant,
             "additivity",
             format!(
                 "output(a++b) == output(a) ⊎ output(b) ({} + {} == {} item(s))",
@@ -260,7 +260,7 @@ pub async fn check_additivity(
         )
     } else {
         CheckResult::fail(
-            CheckCategory::Metamorphic,
+            CheckCategory::EngineInvariant,
             "additivity",
             format!(
                 "output(a++b) != output(a) ⊎ output(b): {} + {} = {} expected, got {} item(s) \

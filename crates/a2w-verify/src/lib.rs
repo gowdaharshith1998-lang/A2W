@@ -30,6 +30,7 @@ pub mod golden;
 pub mod harness;
 pub mod metamorphic;
 pub mod report;
+pub mod semantic;
 pub mod spec;
 
 use std::collections::BTreeMap;
@@ -42,6 +43,7 @@ pub use golden::{GoldenFixture, MatchMode};
 pub use harness::VerificationHarness;
 pub use metamorphic::MetamorphicSuite;
 pub use report::{CheckCategory, CheckResult, ConfidenceReport, Threshold};
+pub use semantic::{SemanticRelation, SemanticSuite};
 pub use spec::{CountOp, SpecAssertion, WorkflowSpec};
 
 /// Errors raised by the verification harness.
@@ -94,8 +96,11 @@ pub struct VerificationPlan {
     pub spec: Option<WorkflowSpec>,
     /// Golden input→output fixtures.
     pub golden: Vec<GoldenFixture>,
-    /// The metamorphic relations to run.
+    /// The engine-invariant metamorphic relations to run (NOT outcome
+    /// evidence — they verify the engine's guarantees).
     pub metamorphic: Option<MetamorphicSuite>,
+    /// The spec-derived semantic relations to run (outcome evidence).
+    pub semantic: Option<SemanticSuite>,
 }
 
 impl VerificationPlan {
@@ -122,10 +127,17 @@ impl VerificationPlan {
         self
     }
 
-    /// Attach a metamorphic suite.
+    /// Attach an engine-invariant metamorphic suite.
     #[must_use]
     pub fn with_metamorphic(mut self, suite: MetamorphicSuite) -> Self {
         self.metamorphic = Some(suite);
+        self
+    }
+
+    /// Attach a spec-derived semantic-relation suite (outcome evidence).
+    #[must_use]
+    pub fn with_semantic(mut self, suite: SemanticSuite) -> Self {
+        self.semantic = Some(suite);
         self
     }
 }
@@ -163,6 +175,12 @@ pub async fn verify(
 
     for fixture in &plan.golden {
         report.push(fixture.check(harness, wf, &plan.observe_node).await?);
+    }
+
+    if let Some(suite) = &plan.semantic {
+        for result in suite.run(harness, wf, &plan.observe_node).await? {
+            report.push(result);
+        }
     }
 
     if let Some(suite) = &plan.metamorphic {
