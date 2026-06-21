@@ -189,6 +189,81 @@ async fn search_is_deterministic() {
 }
 
 #[tokio::test]
+async fn guard_rejects_fitness_holdout_sharing_inputs() {
+    use a2w_search::{shared_evidence, SearchError};
+    let harness = VerificationHarness::new();
+    let seed = broken_seed();
+
+    // Both plans use the SAME golden fixture (same input + expected) — a
+    // correlated blind spot. The guard must reject before any search runs.
+    let shared = golden("same", 10, 2);
+    let fitness = VerificationPlan::new("total").with_golden(vec![shared.clone()]);
+    let holdout = VerificationPlan::new("total").with_golden(vec![shared]);
+
+    assert!(shared_evidence(&fitness, &holdout).is_some());
+    let err = evolve(&harness, &seed, &fitness, &holdout, &rich_operators(), SearchConfig::default())
+        .await
+        .expect_err("shared evidence must be rejected");
+    assert!(matches!(err, SearchError::CorrelatedEvidence(_)), "got {err:?}");
+}
+
+#[tokio::test]
+async fn guard_rejects_identical_assertions_even_on_different_inputs() {
+    use a2w_search::shared_evidence;
+    // Different inputs, but the SAME spec assertion — still a correlated blind
+    // spot (both plans are blind to whatever that assertion misses).
+    let assertion = SpecAssertion::EveryItemHasField {
+        path: "/total".to_string(),
+    };
+    let fitness = VerificationPlan::new("total").with_spec(WorkflowSpec {
+        input: vec![json!({ "price": 1, "qty": 1 })],
+        assertions: vec![assertion.clone()],
+    });
+    let holdout = VerificationPlan::new("total").with_spec(WorkflowSpec {
+        input: vec![json!({ "price": 9, "qty": 9 })],
+        assertions: vec![assertion],
+    });
+    assert!(
+        shared_evidence(&fitness, &holdout).is_some(),
+        "identical assertions must be flagged even with different inputs"
+    );
+}
+
+#[tokio::test]
+async fn disjoint_holdout_catches_a_fitness_gap() {
+    // The correlated-blind-spot test: the fitness set has a GAP (presence only)
+    // that a constant satisfies; the DISJOINT holdout (exact golden, different
+    // input, different evidence kind) exercises the case the gap lets pass, so
+    // the certified score reflects the real defect.
+    let harness = VerificationHarness::new();
+    let seed = broken_seed();
+
+    let fitness = VerificationPlan::new("total").with_spec(WorkflowSpec {
+        input: vec![json!({ "price": 10, "qty": 2 })],
+        assertions: vec![SpecAssertion::EveryItemHasField {
+            path: "/total".to_string(),
+        }],
+    });
+    let holdout = VerificationPlan::new("total").with_golden(vec![golden("hold", 5, 3)]);
+    // Genuinely disjoint: different inputs, different evidence kinds.
+    assert!(a2w_search::shared_evidence(&fitness, &holdout).is_none());
+
+    let ops: Vec<Box<dyn Mutation>> = vec![Box::new(SetTransformField {
+        vocabulary: vec![("total".to_string(), json!(0))],
+        frozen: vec![],
+    })];
+    let outcome = evolve(&harness, &seed, &fitness, &holdout, &ops, SearchConfig::default())
+        .await
+        .expect("search");
+    // Fitness was satisfied; the holdout reveals the defect the gap hid.
+    assert!(outcome.best_fitness_score >= 1.0);
+    assert!(
+        outcome.best_holdout_score < 1.0,
+        "the disjoint holdout must catch the fitness gap"
+    );
+}
+
+#[tokio::test]
 async fn search_on_already_perfect_seed_does_not_regress() {
     let harness = VerificationHarness::new();
     // A seed that already computes total correctly.

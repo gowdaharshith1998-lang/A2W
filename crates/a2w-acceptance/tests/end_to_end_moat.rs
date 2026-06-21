@@ -11,8 +11,8 @@ use a2w_ir::{Connection, Node, NodeKind, Workflow, SCHEMA_VERSION};
 use a2w_search::{evolve, InsertPassthrough, Mutation, SearchConfig, SetTransformField};
 use a2w_skills::SkillLibrary;
 use a2w_verify::{
-    verify, CountOp, MetamorphicSuite, SemanticRelation, SemanticSuite, SpecAssertion,
-    VerificationHarness, VerificationPlan, WorkflowSpec,
+    verify, CountOp, GoldenFixture, MatchMode, MetamorphicSuite, SemanticRelation, SemanticSuite,
+    SpecAssertion, VerificationHarness, VerificationPlan, WorkflowSpec,
 };
 use serde_json::{json, Value};
 
@@ -139,40 +139,51 @@ async fn whole_program_validate_run_verify_promote_search() {
     assert!(sim > 0.0);
 
     // -- M5: search improves a deliberately-broken seed ---------------------
-    // Seed = the router with the escalate Transform setting the WRONG field, so
-    // the spec's `every escalated==true` assertion fails.
+    // Seed = the router with the escalate Transform NOT tagging escalated, so
+    // the outcome evidence fails.
     let mut broken = alert_router();
     broken.id = "wf_alert_router_broken".into();
     for node in &mut broken.nodes {
         if node.id == "escalate" {
-            node.params = json!({ "set": { "wrong": 1 } });
+            node.params = json!({ "set": {} }); // passthrough: no `escalated` tag
         }
     }
-    // Fitness and holdout are DISJOINT input sets, both encoding the intent
-    // (high-priority alerts get escalated:true). The search optimizes fitness;
-    // the winner is certified on the holdout.
-    let plan_for = |input: Vec<Value>| {
-        VerificationPlan::new("escalate")
-            .with_spec(WorkflowSpec {
-                input: input.clone(),
-                assertions: vec![SpecAssertion::EveryItemFieldEquals {
-                    path: "/escalated".to_string(),
-                    value: json!(true),
-                }],
-            })
-            .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
-                base_input: input,
-                passing_extra: vec![json!({ "id": 9001, "priority": "high" })],
-                per_item: 1,
-            }]))
-    };
-    // alerts(9) and a separately-constructed disjoint set for the holdout.
-    let fitness_plan = plan_for(alerts(9));
-    let holdout_plan = plan_for(
-        (100..112)
-            .map(|i| json!({ "id": i, "priority": if i % 2 == 0 { "high" } else { "low" } }))
-            .collect(),
-    );
+    // Fitness and holdout are EVIDENCE-DISJOINT (F3): different inputs, AND
+    // different evidence kinds. Fitness = spec assertion + semantic relation on
+    // alerts(9); holdout = an exact golden fixture on a separate input. The
+    // disjointness guard inside evolve() enforces this.
+    let fitness_plan = VerificationPlan::new("escalate")
+        .with_spec(WorkflowSpec {
+            input: alerts(9),
+            assertions: vec![SpecAssertion::EveryItemFieldEquals {
+                path: "/escalated".to_string(),
+                value: json!(true),
+            }],
+        })
+        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
+            base_input: alerts(9),
+            passing_extra: vec![json!({ "id": 9001, "priority": "high" })],
+            per_item: 1,
+        }]));
+    let holdout_input = vec![
+        json!({ "id": 200, "priority": "high" }),
+        json!({ "id": 201, "priority": "low" }),
+    ];
+    let holdout_plan = VerificationPlan::new("escalate")
+        .with_golden(vec![GoldenFixture {
+            name: "escalation".to_string(),
+            input: holdout_input.clone(),
+            // Only the high-priority alert reaches `escalate`, tagged escalated.
+            expected: vec![json!({ "id": 200, "priority": "high", "escalated": true })],
+            match_mode: MatchMode::Exact,
+        }])
+        // The holdout carries its OWN semantic relation (different input than
+        // the fitness plan's) so it both certifies and clears the threshold.
+        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
+            base_input: holdout_input,
+            passing_extra: vec![json!({ "id": 202, "priority": "high" })],
+            per_item: 1,
+        }]));
 
     let seed_holdout = verify(&harness, &broken, &holdout_plan).await.unwrap().score();
     assert!(seed_holdout < 1.0, "broken seed must be imperfect on the holdout");

@@ -11,6 +11,7 @@
 //! Results are reported under [`CheckCategory::SemanticRelation`] — outcome
 //! evidence.
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::harness::VerificationHarness;
@@ -21,7 +22,7 @@ use crate::VerifyError;
 const EPS: f64 = 1e-9;
 
 /// A single spec-derived semantic relation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum SemanticRelation {
     /// **Multiplicative homomorphism.** Multiplying every input item's
     /// `in_field` (a JSON pointer) by `factor` must multiply the *summed*
@@ -60,6 +61,19 @@ pub enum SemanticRelation {
 }
 
 impl SemanticRelation {
+    /// The input set(s) this relation evaluates against. Used by the search
+    /// layer's disjointness guard to detect a fitness/holdout overlap.
+    #[must_use]
+    pub fn inputs(&self) -> Vec<Vec<Value>> {
+        match self {
+            SemanticRelation::FieldScaling { base_input, .. } => vec![base_input.clone()],
+            SemanticRelation::AppendAddsOutputs { base_input, passing_extra, .. } => {
+                vec![base_input.clone(), passing_extra.clone()]
+            }
+            SemanticRelation::CountConservation { input } => vec![input.clone()],
+        }
+    }
+
     /// A stable name for the report.
     #[must_use]
     pub fn name(&self) -> String {

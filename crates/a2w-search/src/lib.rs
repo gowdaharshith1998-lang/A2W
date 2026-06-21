@@ -17,14 +17,33 @@
 
 #![forbid(unsafe_code)]
 
+pub mod disjoint;
 pub mod operators;
 
 use std::collections::BTreeSet;
 
 use a2w_ir::Workflow;
 use a2w_verify::{verify, ConfidenceReport, VerificationHarness, VerificationPlan, VerifyError};
+use thiserror::Error;
 
+pub use disjoint::{assert_plans_disjoint, shared_evidence};
 pub use operators::{InsertPassthrough, Mutation, RemovePassthrough, SetTransformField};
+
+/// Errors raised by the search layer.
+#[derive(Debug, Error)]
+pub enum SearchError {
+    /// A verification/engine failure while scoring a candidate.
+    #[error(transparent)]
+    Verify(#[from] VerifyError),
+    /// The fitness and holdout plans share evidence, so the holdout cannot
+    /// independently certify what the fitness optimized (F3).
+    #[error(
+        "fitness and holdout plans share evidence ({0}); they must be authored independently \
+         (different inputs, assertions, fixtures and relations) so the holdout can certify what \
+         the fitness optimized — not rubber-stamp it"
+    )]
+    CorrelatedEvidence(String),
+}
 
 /// Search configuration.
 #[derive(Debug, Clone, Copy)]
@@ -133,8 +152,10 @@ struct Scored {
 /// reproducible order. No RNG: reruns are byte-identical.
 ///
 /// # Errors
-/// [`VerifyError`] if the seed or the winner cannot be scored against either
-/// plan (e.g. an observe node is absent, or the workflow is unrunnable).
+/// - [`SearchError::CorrelatedEvidence`] if the fitness and holdout plans share
+///   evidence (F3) — checked before any work is done.
+/// - [`SearchError::Verify`] if the seed or the winner cannot be scored against
+///   either plan (e.g. an observe node is absent, or the workflow is unrunnable).
 pub async fn evolve(
     harness: &VerificationHarness,
     seed: &Workflow,
@@ -142,7 +163,11 @@ pub async fn evolve(
     holdout: &VerificationPlan,
     operators: &[Box<dyn Mutation>],
     config: SearchConfig,
-) -> Result<SearchOutcome, VerifyError> {
+) -> Result<SearchOutcome, SearchError> {
+    // F3: refuse to run if fitness and holdout are not evidence-disjoint —
+    // otherwise the holdout would certify exactly what the fitness optimized.
+    assert_plans_disjoint(fitness, holdout)?;
+
     // Seed baselines on BOTH plans (holdout for honest "did we improve?").
     let seed_fitness = score(harness, seed, fitness).await?;
     let initial_fitness_score = seed_fitness.score;
