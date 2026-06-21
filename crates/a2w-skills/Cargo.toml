@@ -1,0 +1,19 @@
+[package]
+name = "a2w-skills"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A2W skill library / workflow memory: promote verification-cleared workflows into a reusable, task-signature-indexed library and retrieve/compose them for new queries."
+
+[dependencies]
+a2w-ir = { workspace = true }
+a2w-validator = { workspace = true }
+a2w-verify = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+a2w-nodes = { workspace = true }
+a2w-engine = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

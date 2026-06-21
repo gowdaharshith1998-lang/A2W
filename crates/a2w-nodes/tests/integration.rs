@@ -212,8 +212,12 @@ async fn on_error_continue_completes() {
         .with(NodeKind::HttpRequest, Arc::new(AlwaysFail))
         .with(NodeKind::Transform, Arc::new(a2w_nodes::Transform));
 
-    // trigger -> failing(HttpRequest) -> sink(Transform passthrough)
+    // trigger -> failing(HttpRequest) -> sink(Transform passthrough).
+    // The AlwaysFail executor ignores params, but the workflow must still pass
+    // M1 validation (http_request requires a string `url`) before the engine
+    // runs it — so give the node a valid url.
     let mut failing = Node::new("failing", NodeKind::HttpRequest);
+    failing.params = serde_json::json!({ "url": "https://example.invalid/always-fail" });
     failing.on_error = Some(ErrorPolicy::Continue);
 
     let workflow = wf(
@@ -431,9 +435,12 @@ async fn mcp_tool_call_real_run_carries_canned_result() {
 }
 
 #[tokio::test]
-async fn mcp_tool_call_missing_tool_surfaces_bad_params_cleanly() {
-    // Missing `tool` under the default Stop policy => the run fails with a
-    // NodeError(BadParams) wrapped in an engine Node error, no panic.
+async fn mcp_tool_call_missing_tool_is_rejected_before_execute() {
+    // M1 reject-before-execute: a mcp_tool_call missing `tool` is invalid IR.
+    // The engine validates first and returns EngineError::Invalid WITHOUT
+    // running any node — the executor never sees a malformed node. (Pre-M1
+    // this only surfaced as a runtime BadParams; M1 moves it to authoring
+    // time so the executor may assume validity.)
     let node = McpToolCall::new(Arc::new(CannedInvoker {
         value: serde_json::Value::Null,
     }));
@@ -456,19 +463,23 @@ async fn mcp_tool_call_missing_tool_surfaces_bad_params_cleanly() {
             &log,
         )
         .await
-        .expect_err("missing tool should fail the run");
+        .expect_err("missing tool should be rejected by validation");
 
-    // The failure mentions bad params and there is a Failed event for the node.
-    let msg = err.to_string();
+    match err {
+        EngineError::Invalid(report) => {
+            assert!(!report.is_valid);
+            assert!(
+                report.findings.iter().any(|f| f.message.contains("tool")),
+                "a finding should mention the missing `tool`: {:?}",
+                report.findings
+            );
+        }
+        other => panic!("expected EngineError::Invalid, got {other:?}"),
+    }
+    // No node executed, so no step events were recorded.
     assert!(
-        msg.contains("bad params") || msg.contains("tool"),
-        "expected a bad-params message, got: {msg}"
-    );
-    assert!(
-        log.events()
-            .iter()
-            .any(|e| e.node_id == "call" && matches!(e.kind, StepKind::Failed)),
-        "a Failed event should be recorded for the mcp node"
+        log.events().is_empty(),
+        "invalid IR must be rejected before any node runs"
     );
 }
 
@@ -651,9 +662,10 @@ async fn code_step_real_run_carries_parsed_wasm_output() {
 }
 
 #[tokio::test]
-async fn code_step_missing_wasm_surfaces_bad_params_cleanly() {
-    // Missing `wasm` under the default Stop policy => the run fails with a
-    // NodeError(BadParams) wrapped in an engine Node error, no panic.
+async fn code_step_missing_wasm_is_rejected_before_execute() {
+    // M1 reject-before-execute: a code_step missing `wasm` is invalid IR and
+    // the engine refuses to run it (EngineError::Invalid), without executing
+    // any node.
     let node = CodeStep::new(Arc::new(CannedRunner { bytes: vec![] }));
 
     let mut code = Node::new("code", NodeKind::CodeStep);
@@ -674,18 +686,22 @@ async fn code_step_missing_wasm_surfaces_bad_params_cleanly() {
             &log,
         )
         .await
-        .expect_err("missing wasm should fail the run");
+        .expect_err("missing wasm should be rejected by validation");
 
-    let msg = err.to_string();
+    match err {
+        EngineError::Invalid(report) => {
+            assert!(!report.is_valid);
+            assert!(
+                report.findings.iter().any(|f| f.message.contains("wasm")),
+                "a finding should mention the missing `wasm`: {:?}",
+                report.findings
+            );
+        }
+        other => panic!("expected EngineError::Invalid, got {other:?}"),
+    }
     assert!(
-        msg.contains("bad params") || msg.contains("wasm"),
-        "expected a bad-params message, got: {msg}"
-    );
-    assert!(
-        log.events()
-            .iter()
-            .any(|e| e.node_id == "code" && matches!(e.kind, StepKind::Failed)),
-        "a Failed event should be recorded for the code node"
+        log.events().is_empty(),
+        "invalid IR must be rejected before any node runs"
     );
 }
 

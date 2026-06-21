@@ -18,6 +18,9 @@ members = [
     "crates/a2w-server",
     "crates/a2w-expr",
     "crates/a2w-bench",
+    "crates/a2w-verify",
+    "crates/a2w-skills",
+    "crates/a2w-search",
 ]
 
 [workspace.package]
@@ -92,3 +95,7 @@ a2w-import = { path = "crates/a2w-import" }
 a2w-openapi = { path = "crates/a2w-openapi" }
 a2w-server = { path = "crates/a2w-server" }
 a2w-expr = { path = "crates/a2w-expr" }
+# M3 verification spine, M4 skill library, M5 IR search.
+a2w-verify = { path = "crates/a2w-verify" }
+a2w-skills = { path = "crates/a2w-skills" }
+a2w-search = { path = "crates/a2w-search" }

@@ -75,6 +75,12 @@ pub enum WarningKind {
     /// A connection referenced a node name that did not resolve to any imported
     /// node; the edge was dropped.
     UnsupportedConnection,
+    /// A structurally-mapped node (branch / switch) carries a required param
+    /// (a `condition`, or a `key`+`cases`) whose n8n shape does not translate
+    /// cleanly. A minimal, valid-by-construction placeholder was synthesized so
+    /// the imported workflow still passes A2W validation; the author must
+    /// review and replace it with the intended routing logic.
+    PlaceholderParams,
 }
 
 /// A single non-fatal issue encountered during import.

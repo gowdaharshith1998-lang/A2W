@@ -125,8 +125,10 @@ pub fn workflow_json_schema() -> schemars::schema::RootSchema {
 #[must_use]
 pub fn sample_workflow() -> Workflow {
     let trigger = Node::new("trigger", NodeKind::WebhookTrigger);
-    let fetch = Node::new("fetch", NodeKind::HttpRequest);
-    let shape = Node::new("shape", NodeKind::Transform);
+    let mut fetch = Node::new("fetch", NodeKind::HttpRequest);
+    fetch.params = serde_json::json!({ "url": "https://example.com/api" });
+    let mut shape = Node::new("shape", NodeKind::Transform);
+    shape.params = serde_json::json!({ "set": { "sampled": true } });
 
     Workflow {
         schema_version: SCHEMA_VERSION,
@@ -234,8 +236,11 @@ mod tests {
         assert!(!NodeKind::HttpRequest.is_trigger());
 
         assert_eq!(NodeKind::Branch.output_port_count(), 2);
+        assert_eq!(NodeKind::Loop.output_port_count(), 2);
+        assert_eq!(NodeKind::Approval.output_port_count(), 2);
         assert_eq!(NodeKind::HttpRequest.output_port_count(), 1);
         assert!(NodeKind::Switch.has_dynamic_ports());
         assert!(!NodeKind::Branch.has_dynamic_ports());
+        assert!(!NodeKind::Loop.has_dynamic_ports());
     }
 }

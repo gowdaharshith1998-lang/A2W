@@ -1,0 +1,19 @@
+[package]
+name = "a2w-verify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A2W verification & accuracy spine: golden fixtures, metamorphic relations, differential cross-checks, and a calibrated confidence report over zero-token deterministic runs."
+
+[dependencies]
+a2w-ir = { workspace = true }
+a2w-engine = { workspace = true }
+a2w-validator = { workspace = true }
+a2w-nodes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

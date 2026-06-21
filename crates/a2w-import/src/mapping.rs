@@ -38,9 +38,16 @@ pub(crate) fn map_node(node_name: &str, n8n_type: &str, parameters: &Value) -> M
         }
         Some(NodeKind::CodeStep) => build_code(parameters),
         Some(NodeKind::LlmCall) => build_llm(parameters, n8n_type),
+        // Branch / Switch carry a *required* condition / key+cases under M1.
+        // n8n's `if`/`switch` parameter shapes don't map cleanly, so we
+        // synthesize a minimal placeholder that is valid-by-construction and
+        // flag it for manual review — keeping the imported graph runnable
+        // rather than producing an IR the validator (rightly) rejects.
+        Some(NodeKind::Branch) => build_branch(parameters, node_name, &mut warnings),
+        Some(NodeKind::Switch) => build_switch(parameters, node_name, &mut warnings),
         Some(other) => {
-            // Triggers, merge, branch, switch: translate any string params
-            // best-effort but otherwise carry the original parameters through.
+            // Triggers, merge: translate any string params best-effort but
+            // otherwise carry the original parameters through.
             best_effort_params(parameters, node_name, &mut warnings, Some(other))
         }
         None => {
@@ -250,9 +257,61 @@ fn build_llm(parameters: &Value, n8n_type: &str) -> Value {
     Value::Object(out)
 }
 
-/// For kinds we map structurally (triggers, merge, branch, switch) but whose
-/// parameters we do not reshape: carry the original parameters through, while
-/// still translating any embedded n8n string expressions best-effort.
+/// Build params for an n8n `if` → A2W [`NodeKind::Branch`].
+///
+/// n8n stores `if` conditions under `parameters.conditions` in a shape that
+/// does not map cleanly to A2W's `{ path, op, value }`. Rather than emit an IR
+/// the M1 validator rejects (Branch requires a `condition`), we synthesize a
+/// minimal valid-by-construction placeholder and flag it for review. The
+/// original n8n conditions are preserved under `_original_conditions` so a
+/// downstream repair step (or human) can reconstruct the real predicate.
+fn build_branch(parameters: &Value, node_name: &str, warnings: &mut Vec<ImportWarning>) -> Value {
+    warnings.push(ImportWarning {
+        node: Some(node_name.to_string()),
+        kind: WarningKind::PlaceholderParams,
+        message: format!(
+            "n8n `if` node '{node_name}' was mapped to a Branch with a placeholder \
+             condition (routes every item to the `true` port); replace \
+             `params.condition` with the intended predicate. Original n8n \
+             conditions preserved under `_original_conditions`."
+        ),
+    });
+    json!({
+        // Placeholder: `eq` against a synthetic field that is never present,
+        // so by default every item routes to port 1 (false) deterministically.
+        // Valid under both the validator and the Branch executor.
+        "condition": { "path": "/_a2w_placeholder", "op": "eq", "value": true },
+        "_original_conditions": parameters.get("conditions").cloned().unwrap_or(Value::Null),
+    })
+}
+
+/// Build params for an n8n `switch` → A2W [`NodeKind::Switch`].
+///
+/// Same rationale as [`build_branch`]: synthesize a minimal valid `key`+`cases`
+/// placeholder (empty cases → everything routes to the default port) and flag
+/// it. The original n8n params are preserved for repair.
+fn build_switch(parameters: &Value, node_name: &str, warnings: &mut Vec<ImportWarning>) -> Value {
+    warnings.push(ImportWarning {
+        node: Some(node_name.to_string()),
+        kind: WarningKind::PlaceholderParams,
+        message: format!(
+            "n8n `switch` node '{node_name}' was mapped to a Switch with a \
+             placeholder key and no cases (routes every item to the default \
+             port 0); replace `params.key`/`params.cases` with the intended \
+             routing. Original n8n params preserved under `_original_params`."
+        ),
+    });
+    json!({
+        "key": "/_a2w_placeholder",
+        "cases": [],
+        "default_port": 0,
+        "_original_params": parameters.clone(),
+    })
+}
+
+/// For kinds we map structurally (triggers, merge) but whose parameters we do
+/// not reshape: carry the original parameters through, while still translating
+/// any embedded n8n string expressions best-effort.
 fn best_effort_params(
     parameters: &Value,
     node_name: &str,
@@ -263,7 +322,7 @@ fn best_effort_params(
     if let Some(kind) = kind {
         if let Value::Object(map) = &mut translated {
             // Tag non-trivial structural mappings for traceability.
-            if matches!(kind, NodeKind::Merge | NodeKind::Branch | NodeKind::Switch) {
+            if matches!(kind, NodeKind::Merge) {
                 map.entry("_original_type".to_string())
                     .or_insert(Value::Null);
             }

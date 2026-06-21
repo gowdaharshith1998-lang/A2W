@@ -16,5 +16,10 @@ a2w-engine = { path = "../a2w-engine" }
 a2w-nodes = { path = "../a2w-nodes" }
 a2w-testkit = { path = "../a2w-testkit" }
 a2w-optimizer = { path = "../a2w-optimizer" }
+a2w-verify = { path = "../a2w-verify" }
+a2w-skills = { path = "../a2w-skills" }
+a2w-search = { path = "../a2w-search" }
 serde_json = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+proptest = { workspace = true }
+async-trait = { workspace = true }

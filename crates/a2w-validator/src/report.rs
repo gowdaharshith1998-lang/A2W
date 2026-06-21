@@ -46,6 +46,21 @@ pub enum FindingCode {
     /// validator rejects this at save time so the operator gets a clear
     /// error before the workflow ever runs.
     SubWorkflowSelfReference,
+    /// M1: A node is missing a parameter required by its `NodeKind`
+    /// (e.g. an `http_request` with no `url`, a `branch` with no
+    /// `condition`). The executor would reject this at runtime with
+    /// `BadParams`; the validator surfaces it at authoring time so the
+    /// agent's search space is safe by construction.
+    MissingRequiredParam,
+    /// M1: A node's `params` has the right shape but a field is the wrong
+    /// type — e.g. `http_request.url` is an array instead of a string,
+    /// `branch.condition.op` is a number, `transform.set` is not an object.
+    InvalidParamType,
+    /// M1: A trigger node has an incoming connection. Triggers are
+    /// workflow entry points; they only emit. The executor effectively
+    /// ignores any upstream items, so the connection is dead weight at
+    /// best and a logic bug at worst.
+    TriggerHasIncomingConnection,
 }
 
 /// Where a [`Finding`] applies.

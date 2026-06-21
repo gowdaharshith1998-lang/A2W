@@ -18,6 +18,11 @@
 //!    dynamic-port kinds, i.e. `Switch`).
 //! 6. Directed cycle → `Error` `Cycle`.
 //! 7. Unreachable nodes → `Warning` `UnreachableNode`.
+//! 8. Sub-workflow self-reference → `Error` `SubWorkflowSelfReference`.
+//! 9. Per-kind required-field / role checks → `Error` `MissingRequiredParam` /
+//!    `InvalidParamType` / `TriggerHasIncomingConnection` (M1 reject-before-
+//!    execute layer: invalid IR fails at authoring time so the executor may
+//!    henceforth assume validity as a precondition).
 
 #![forbid(unsafe_code)]
 
@@ -366,7 +371,235 @@ pub fn validate(wf: &Workflow) -> ValidationReport {
         }
     }
 
+    // --- Check 9 (M1): per-kind required-field / role checks --------------
+    // The executor would reject these at runtime with `BadParams`. The
+    // validator surfaces them at authoring time so the agent's search space
+    // is safe by construction and the executor may treat validity as a
+    // precondition.
+    //
+    // We err on the side of being USEFUL rather than COMPLETE: only
+    // unambiguous violations (a missing url on http_request, etc.) become
+    // errors. Anything that the executor accepts (defaults, optional fields)
+    // is left alone.
+    let mut targets: HashSet<&str> = HashSet::new();
+    for conn in &wf.connections {
+        targets.insert(conn.to_node.as_str());
+    }
+    for node in &wf.nodes {
+        check_node_params(node, &targets, &mut findings);
+    }
+
     ValidationReport::from_findings(findings)
+}
+
+/// Per-kind required-field / role check. Pushes into `findings`.
+///
+/// Decoupled from the rest of validate() so each kind's rule is auditable in
+/// one place — and so M5's mutation operators can call it on a synthesized
+/// node without re-walking the whole graph.
+fn check_node_params(node: &Node, targets: &HashSet<&str>, findings: &mut Vec<Finding>) {
+    use a2w_ir::NodeKind as K;
+    let id = node.id.as_str();
+    let p = &node.params;
+
+    // Triggers must not have incoming connections — they are entry points.
+    if node.kind.is_trigger() && targets.contains(id) {
+        findings.push(Finding {
+            severity: Severity::Error,
+            code: FindingCode::TriggerHasIncomingConnection,
+            message: format!(
+                "trigger '{id}' has incoming connection(s); triggers are entry \
+                 points and only emit"
+            ),
+            location: Location::Node(id.to_string()),
+            suggestion: Some(format!(
+                "remove the incoming connection(s) to '{id}', or replace the \
+                 trigger with a non-trigger kind if intermediate routing was intended"
+            )),
+        });
+    }
+
+    match node.kind {
+        K::HttpRequest => {
+            match p.get("url") {
+                None => missing(findings, id, "url",
+                    "http_request requires a `url` string param"),
+                Some(serde_json::Value::String(s)) if s.is_empty() => bad_type(findings, id, "url",
+                    "http_request `url` must be a non-empty string"),
+                Some(serde_json::Value::String(_)) => {}
+                Some(_) => bad_type(findings, id, "url",
+                    "http_request `url` must be a string"),
+            }
+            if let Some(method) = p.get("method") {
+                if !method.is_string() {
+                    bad_type(findings, id, "method", "http_request `method` must be a string");
+                }
+            }
+            if let Some(headers) = p.get("headers") {
+                if !headers.is_object() {
+                    bad_type(findings, id, "headers", "http_request `headers` must be an object");
+                }
+            }
+        }
+        K::Transform => {
+            // `set` is the canonical shaping field; if present it must be an
+            // object. Empty params is allowed (passes items through).
+            if let Some(set) = p.get("set") {
+                if !set.is_object() {
+                    bad_type(findings, id, "set", "transform `set` must be a JSON object");
+                }
+            }
+        }
+        K::Branch => match p.get("condition") {
+            None => missing(findings, id, "condition", "branch requires a `condition`"),
+            Some(serde_json::Value::String(_)) => {} // shorthand path
+            Some(serde_json::Value::Object(o)) => {
+                if !o.contains_key("path") {
+                    missing(findings, id, "condition.path",
+                        "branch `condition` object must contain a `path`");
+                } else if !o["path"].is_string() {
+                    bad_type(findings, id, "condition.path",
+                        "branch `condition.path` must be a string");
+                }
+                if let Some(op) = o.get("op") {
+                    if !op.is_string() {
+                        bad_type(findings, id, "condition.op",
+                            "branch `condition.op` must be a string (truthy|eq|ne|contains)");
+                    }
+                }
+            }
+            Some(_) => bad_type(findings, id, "condition",
+                "branch `condition` must be a JSON pointer string or { path, op?, value? }"),
+        },
+        K::Switch => {
+            match p.get("key") {
+                None => missing(findings, id, "key", "switch requires a `key` JSON pointer"),
+                Some(serde_json::Value::String(_)) => {}
+                Some(_) => bad_type(findings, id, "key", "switch `key` must be a string"),
+            }
+            match p.get("cases") {
+                None => missing(findings, id, "cases",
+                    "switch requires a `cases` array"),
+                Some(serde_json::Value::Array(arr)) => {
+                    for (i, c) in arr.iter().enumerate() {
+                        let Some(obj) = c.as_object() else {
+                            bad_type(findings, id, &format!("cases[{i}]"),
+                                "each switch case must be an object { value, port }");
+                            continue;
+                        };
+                        if !obj.contains_key("value") {
+                            missing(findings, id, &format!("cases[{i}].value"),
+                                "each switch case must include a `value`");
+                        }
+                        match obj.get("port") {
+                            None => missing(findings, id, &format!("cases[{i}].port"),
+                                "each switch case must include a `port` (non-negative integer)"),
+                            Some(v) if v.as_u64().is_none() =>
+                                bad_type(findings, id, &format!("cases[{i}].port"),
+                                    "switch case `port` must be a non-negative integer"),
+                            _ => {}
+                        }
+                    }
+                }
+                Some(_) => bad_type(findings, id, "cases", "switch `cases` must be an array"),
+            }
+        }
+        K::Loop => match p.get("over") {
+            None => missing(findings, id, "over", "loop requires an `over` JSON pointer"),
+            Some(serde_json::Value::String(_)) => {}
+            Some(_) => bad_type(findings, id, "over", "loop `over` must be a string"),
+        },
+        K::Wait => match p.get("duration_ms") {
+            None => missing(findings, id, "duration_ms",
+                "wait requires a `duration_ms` non-negative integer"),
+            Some(v) if v.as_u64().is_none() => bad_type(findings, id, "duration_ms",
+                "wait `duration_ms` must be a non-negative integer"),
+            _ => {}
+        },
+        K::SubWorkflow => {
+            let has_id = p.get("workflow_id").is_some();
+            let has_inline = p.get("workflow").is_some();
+            if !has_id && !has_inline {
+                missing(findings, id, "workflow_id|workflow",
+                    "sub_workflow requires either `workflow_id` or an inline `workflow`");
+            }
+            if has_id && !p["workflow_id"].is_string() {
+                bad_type(findings, id, "workflow_id",
+                    "sub_workflow `workflow_id` must be a string");
+            }
+            if has_inline && !p["workflow"].is_object() {
+                bad_type(findings, id, "workflow",
+                    "sub_workflow inline `workflow` must be an object");
+            }
+        }
+        K::LlmCall => match p.get("prompt") {
+            None => missing(findings, id, "prompt", "llm_call requires a `prompt` string"),
+            Some(serde_json::Value::String(_)) => {}
+            Some(_) => bad_type(findings, id, "prompt", "llm_call `prompt` must be a string"),
+        },
+        K::McpToolCall => {
+            if p.get("server").is_none() && p.get("command").is_none() {
+                missing(findings, id, "server|command",
+                    "mcp_tool_call requires a `server` spec or a `command`");
+            }
+            if p.get("tool").is_none() {
+                missing(findings, id, "tool", "mcp_tool_call requires a `tool` name");
+            }
+        }
+        K::CodeStep => {
+            // CodeStep runs a sandboxed WASM module: it needs a `wasm` source
+            // ({ base64 } or { path }) plus a `function` export name.
+            match p.get("wasm") {
+                None => missing(findings, id, "wasm",
+                    "code_step requires a `wasm` source ({ base64} or { path })"),
+                Some(serde_json::Value::Object(w)) => {
+                    if !w.contains_key("base64") && !w.contains_key("path") {
+                        missing(findings, id, "wasm.base64|wasm.path",
+                            "code_step `wasm` must contain `base64` or `path`");
+                    }
+                }
+                Some(_) => bad_type(findings, id, "wasm",
+                    "code_step `wasm` must be an object ({ base64 } or { path })"),
+            }
+            match p.get("function") {
+                None => missing(findings, id, "function",
+                    "code_step requires a `function` export name"),
+                Some(v) if !v.is_string() => bad_type(findings, id, "function",
+                    "code_step `function` must be a string"),
+                _ => {}
+            }
+        }
+        K::Approval => {
+            // Approval has only optional params; the runtime fills defaults.
+        }
+        K::Merge | K::WebhookTrigger | K::ScheduleTrigger => {
+            // No required params at the validator layer.
+        }
+    }
+}
+
+/// Helper: emit a `MissingRequiredParam` finding.
+fn missing(findings: &mut Vec<Finding>, node_id: &str, field: &str, msg: &str) {
+    findings.push(Finding {
+        severity: Severity::Error,
+        code: FindingCode::MissingRequiredParam,
+        message: format!("node '{node_id}': {msg} (missing `{field}`)"),
+        location: Location::Node(node_id.to_string()),
+        suggestion: Some(format!("set `params.{field}` on node '{node_id}'")),
+    });
+}
+
+/// Helper: emit an `InvalidParamType` finding.
+fn bad_type(findings: &mut Vec<Finding>, node_id: &str, field: &str, msg: &str) {
+    findings.push(Finding {
+        severity: Severity::Error,
+        code: FindingCode::InvalidParamType,
+        message: format!("node '{node_id}': {msg}"),
+        location: Location::Node(node_id.to_string()),
+        suggestion: Some(format!(
+            "give `params.{field}` of '{node_id}' the expected JSON type"
+        )),
+    });
 }
 
 #[cfg(test)]
@@ -540,10 +773,15 @@ mod tests {
     #[test]
     fn switch_dynamic_ports_are_not_flagged() {
         // Switch has dynamic ports, so a large port index must NOT be flagged.
+        let mut sw = Node::new("sw", NodeKind::Switch);
+        sw.params = serde_json::json!({
+            "key": "/k",
+            "cases": [{ "value": "x", "port": 7 }]
+        });
         let report = validate(&wf(
             vec![
                 Node::new("trigger", NodeKind::WebhookTrigger),
-                Node::new("sw", NodeKind::Switch),
+                sw,
                 Node::new("sink", NodeKind::Transform),
             ],
             vec![
@@ -556,7 +794,7 @@ mod tests {
             "switch ports should not be flagged: {:?}",
             report.findings
         );
-        assert!(report.is_valid);
+        assert!(report.is_valid, "report: {:?}", report.findings);
     }
 
     #[test]
@@ -587,11 +825,13 @@ mod tests {
     #[test]
     fn unreachable_node() {
         // 'island' is valid but not connected to the trigger flow.
+        let mut island = Node::new("island", NodeKind::HttpRequest);
+        island.params = serde_json::json!({ "url": "https://example.com" });
         let report = validate(&wf(
             vec![
                 Node::new("trigger", NodeKind::WebhookTrigger),
                 Node::new("step", NodeKind::Transform),
-                Node::new("island", NodeKind::HttpRequest),
+                island,
             ],
             vec![Connection::new("trigger", 0, "step")],
         ));
@@ -647,6 +887,123 @@ mod tests {
         let json = serde_json::to_string(&report).expect("serialize report");
         assert!(json.contains("findings"));
         assert!(json.contains("is_valid"));
+    }
+
+    // -------- M1: per-kind required-field / role checks --------
+
+    #[test]
+    fn http_request_missing_url_is_error() {
+        let report = validate(&wf(
+            vec![
+                Node::new("trigger", NodeKind::WebhookTrigger),
+                Node::new("fetch", NodeKind::HttpRequest),
+            ],
+            vec![Connection::new("trigger", 0, "fetch")],
+        ));
+        let f = finding(&report, FindingCode::MissingRequiredParam);
+        assert_eq!(f.severity, Severity::Error);
+        assert!(f.message.contains("url"), "{}", f.message);
+        assert!(!report.is_valid);
+    }
+
+    #[test]
+    fn http_request_url_must_be_string() {
+        let mut fetch = Node::new("fetch", NodeKind::HttpRequest);
+        fetch.params = serde_json::json!({ "url": ["not", "a", "string"] });
+        let report = validate(&wf(
+            vec![Node::new("trigger", NodeKind::WebhookTrigger), fetch],
+            vec![Connection::new("trigger", 0, "fetch")],
+        ));
+        let f = finding(&report, FindingCode::InvalidParamType);
+        assert_eq!(f.severity, Severity::Error);
+        assert!(f.message.contains("url"));
+    }
+
+    #[test]
+    fn branch_missing_condition_is_error() {
+        let report = validate(&wf(
+            vec![
+                Node::new("trigger", NodeKind::WebhookTrigger),
+                Node::new("br", NodeKind::Branch),
+            ],
+            vec![Connection::new("trigger", 0, "br")],
+        ));
+        assert!(codes(&report).contains(&FindingCode::MissingRequiredParam));
+        assert!(!report.is_valid);
+    }
+
+    #[test]
+    fn switch_must_have_key_and_cases() {
+        let mut sw = Node::new("sw", NodeKind::Switch);
+        sw.params = serde_json::json!({}); // missing both
+        let report = validate(&wf(
+            vec![Node::new("trigger", NodeKind::WebhookTrigger), sw],
+            vec![Connection::new("trigger", 0, "sw")],
+        ));
+        let missing: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.code == FindingCode::MissingRequiredParam)
+            .collect();
+        assert!(missing.len() >= 2, "should flag both key and cases: {missing:?}");
+        assert!(!report.is_valid);
+    }
+
+    #[test]
+    fn loop_missing_over_is_error() {
+        let report = validate(&wf(
+            vec![
+                Node::new("trigger", NodeKind::WebhookTrigger),
+                Node::new("lp", NodeKind::Loop),
+            ],
+            vec![Connection::new("trigger", 0, "lp")],
+        ));
+        assert!(codes(&report).contains(&FindingCode::MissingRequiredParam));
+    }
+
+    #[test]
+    fn wait_requires_duration_ms_integer() {
+        let mut w = Node::new("w", NodeKind::Wait);
+        w.params = serde_json::json!({ "duration_ms": "soon" });
+        let report = validate(&wf(
+            vec![Node::new("trigger", NodeKind::WebhookTrigger), w],
+            vec![Connection::new("trigger", 0, "w")],
+        ));
+        assert!(codes(&report).contains(&FindingCode::InvalidParamType));
+    }
+
+    #[test]
+    fn sub_workflow_needs_id_or_inline() {
+        let report = validate(&wf(
+            vec![
+                Node::new("trigger", NodeKind::WebhookTrigger),
+                Node::new("sub", NodeKind::SubWorkflow),
+            ],
+            vec![Connection::new("trigger", 0, "sub")],
+        ));
+        assert!(codes(&report).contains(&FindingCode::MissingRequiredParam));
+    }
+
+    #[test]
+    fn trigger_with_incoming_connection_is_error() {
+        // Two triggers OR a self-loop into the trigger — both would be
+        // rejected. We test the second case explicitly so the role check is
+        // the surfacing finding.
+        let mut shape = Node::new("shape", NodeKind::Transform);
+        shape.params = serde_json::json!({ "set": { "x": 1 } });
+        let report = validate(&wf(
+            vec![Node::new("trigger", NodeKind::WebhookTrigger), shape],
+            vec![
+                Connection::new("trigger", 0, "shape"),
+                Connection::new("shape", 0, "trigger"),
+            ],
+        ));
+        assert!(
+            codes(&report).contains(&FindingCode::TriggerHasIncomingConnection),
+            "codes: {:?}",
+            codes(&report)
+        );
+        assert!(!report.is_valid);
     }
 
     #[test]

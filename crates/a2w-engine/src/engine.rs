@@ -874,7 +874,10 @@ mod retry_tests {
                 Node {
                     id: "flaky".into(),
                     kind: NodeKind::HttpRequest, // co-opted: we'll register our own executor
-                    params: serde_json::json!({}),
+                    // M1 validation requires http_request to carry a string
+                    // `url`; the co-opted FlakyExecutor ignores params, but the
+                    // workflow must still pass validate() before the engine runs it.
+                    params: serde_json::json!({ "url": "https://example.invalid/flaky" }),
                     retry: Some(RetryPolicy {
                         max_attempts: 4,
                         backoff_ms: 1,

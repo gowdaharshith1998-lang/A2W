@@ -10,8 +10,13 @@ dependencies = [
  "a2w-ir",
  "a2w-nodes",
  "a2w-optimizer",
+ "a2w-search",
+ "a2w-skills",
  "a2w-testkit",
  "a2w-validator",
+ "a2w-verify",
+ "async-trait",
+ "proptest",
  "serde_json",
  "tokio",
 ]
@@ -171,6 +176,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "a2w-search"
+version = "0.1.0"
+dependencies = [
+ "a2w-engine",
+ "a2w-ir",
+ "a2w-nodes",
+ "a2w-validator",
+ "a2w-verify",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "a2w-server"
 version = "0.1.0"
 dependencies = [
@@ -192,6 +211,21 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "a2w-skills"
+version = "0.1.0"
+dependencies = [
+ "a2w-engine",
+ "a2w-ir",
+ "a2w-nodes",
+ "a2w-validator",
+ "a2w-verify",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -245,6 +279,21 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "a2w-verify"
+version = "0.1.0"
+dependencies = [
+ "a2w-engine",
+ "a2w-ir",
+ "a2w-nodes",
+ "a2w-validator",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

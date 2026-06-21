@@ -69,6 +69,48 @@ async fn dry_run(w: &Workflow) -> Result<RunResult, EngineError> {
         .await
 }
 
+/// A registry with an HttpRequest executor replaced by one that always fails.
+/// Used by the on_error tests so the "bad" node passes M1 validation (has a
+/// url) but still fails at runtime regardless of mode.
+fn failing_http_registry() -> a2w_engine::NodeRegistry {
+    use std::sync::Arc;
+    a2w_nodes::default_registry().with(NodeKind::HttpRequest, Arc::new(AlwaysFailHttp))
+}
+
+#[derive(Debug, Default)]
+struct AlwaysFailHttp;
+
+#[async_trait::async_trait]
+impl a2w_engine::NodeExecutor for AlwaysFailHttp {
+    fn has_side_effects(&self) -> bool { true }
+    async fn execute(
+        &self,
+        _ctx: &a2w_engine::NodeContext,
+        _input: Vec<a2w_engine::Item>,
+    ) -> Result<Vec<a2w_engine::Item>, a2w_engine::NodeError> {
+        Err(a2w_engine::NodeError::Runtime(
+            "test-only: http executor unconditionally fails".into(),
+        ))
+    }
+    async fn dry_run(
+        &self,
+        _ctx: &a2w_engine::NodeContext,
+        _input: Vec<a2w_engine::Item>,
+    ) -> Result<Vec<a2w_engine::Item>, a2w_engine::NodeError> {
+        Err(a2w_engine::NodeError::Runtime(
+            "test-only: http executor unconditionally fails".into(),
+        ))
+    }
+}
+
+async fn dry_run_with_failing_http(w: &Workflow) -> Result<RunResult, EngineError> {
+    let engine = Engine::new(failing_http_registry());
+    let log = MemoryEventLog::new();
+    engine
+        .run(w, vec![json!({})], ExecutionMode::DryRun, &log)
+        .await
+}
+
 /// Assert every output item of `node` is lineage-stamped to that node.
 fn assert_lineage(result: &RunResult, node: &str) {
     let items = result
@@ -285,9 +327,10 @@ async fn parallelize_apply_keeps_workflow_valid_and_runnable() {
 
 #[tokio::test]
 async fn on_error_continue_completes() {
-    // An HTTP node with no `url` fails even in DryRun (BadParams). With Continue
-    // the run proceeds and the node yields zero items.
-    let mut bad = Node::new("bad", NodeKind::HttpRequest); // params = {} → no url
+    // A valid HTTP node (passes M1: has a url) whose executor is swapped for
+    // one that unconditionally fails at runtime. With Continue the run
+    // proceeds and the node yields zero items.
+    let mut bad = http("bad", "https://example.com");
     bad.on_error = Some(ErrorPolicy::Continue);
     let w = wf(
         "cont",
@@ -295,7 +338,9 @@ async fn on_error_continue_completes() {
         vec![c("t", "bad"), c("bad", "after")],
     );
     assert!(validate(&w).is_valid);
-    let r = dry_run(&w).await.expect("run completes under Continue");
+    let r = dry_run_with_failing_http(&w)
+        .await
+        .expect("run completes under Continue");
     assert_eq!(r.status, RunStatus::Completed);
     assert_eq!(out_len(&r, "bad"), 0, "failed node yields nothing");
     assert_eq!(out_len(&r, "after"), 0, "downstream sees zero items");
@@ -310,14 +355,16 @@ async fn on_error_continue_completes() {
 
 #[tokio::test]
 async fn on_error_stop_aborts() {
-    let bad = Node::new("bad", NodeKind::HttpRequest); // no url, default Stop
+    // Valid HTTP node (passes M1) whose executor unconditionally fails;
+    // default Stop policy aborts the whole run.
+    let bad = http("bad", "https://example.com");
     let w = wf(
         "stop",
         vec![trig("t"), bad, xform("after", json!({ "x": 1 }))],
         vec![c("t", "bad"), c("bad", "after")],
     );
-    assert!(validate(&w).is_valid);
-    match dry_run(&w).await {
+    assert!(validate(&w).is_valid, "report: {:?}", validate(&w).findings);
+    match dry_run_with_failing_http(&w).await {
         Err(EngineError::NodeFailed { node_id, .. }) => assert_eq!(node_id, "bad"),
         other => panic!("expected NodeFailed for 'bad', got {other:?}"),
     }

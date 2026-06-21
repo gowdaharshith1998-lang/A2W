@@ -74,13 +74,18 @@ impl NodeKind {
     ///   the cases declared in `params`, which are still untyped in M1. It
     ///   therefore returns [`DYNAMIC_PORTS`] and the validator skips the strict
     ///   upper-bound check for it (any `from_port` is accepted for now).
+    /// - [`NodeKind::Loop`] exposes **2** ports: index `0` = "body" (one item
+    ///   per element of the iterated array), index `1` = "done" (one summary
+    ///   item per parent that iterated). M0 fix: previously declared as a
+    ///   single-port kind, which let the validator silently reject correct
+    ///   loop workflows whose "after loop" branch connected from `(lp, 1)`.
     /// - Every other kind, including triggers, exposes a single port (index
     ///   `0`). Triggers still have one output port: the path their event
     ///   kicks off.
     #[must_use]
     pub fn output_port_count(&self) -> usize {
         match self {
-            NodeKind::Branch => 2,
+            NodeKind::Branch | NodeKind::Loop | NodeKind::Approval => 2,
             NodeKind::Switch => DYNAMIC_PORTS,
             _ => 1,
         }

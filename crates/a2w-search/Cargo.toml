@@ -1,0 +1,18 @@
+[package]
+name = "a2w-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A2W search / evolution over the IR: correctness-preserving mutation operators (validity-preserving) with the M3 confidence report as the fitness function."
+
+[dependencies]
+a2w-ir = { workspace = true }
+a2w-validator = { workspace = true }
+a2w-verify = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+a2w-nodes = { workspace = true }
+a2w-engine = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

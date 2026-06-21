@@ -3,17 +3,118 @@
 Pick up here in a new session. A2W = agent-native, Rust alternative to n8n
 (workflows authored/run by AI agents over MCP; deterministic, zero-token runs).
 
+---
+
+## SESSION: correctness/self-improvement build (M0–M5)
+
+This session executed the "provable correctness + self-improvement" build
+prompt (`A2W_Claude_Code_Build_Prompt.md`), milestones M0–M5. **Calibrated
+status** — exactly what was checked, and what was not:
+
+### What landed
+- **M0 — executor verified.** Added property tests for port-indexed routing of
+  Branch/Switch/Loop (`crates/a2w-acceptance/tests/port_routing_proptest.rs`).
+  **Found + fixed a real bug:** `NodeKind::Loop` declared 1 output port but its
+  executor emits a "done" summary on port 1, so valid loop workflows whose
+  "after-loop" branch read from `(loop, 1)` were wrongly rejected by the
+  validator. `output_port_count()` now returns 2 for `Loop` (and `Approval`,
+  which routes approved/rejected to ports 0/1). All 14 NodeKinds have tested
+  executors (confirmed by the pre-existing `every_node_kind_has_an_executor`).
+- **M1 — static IR validity layer.** `a2w-validator` now adds per-kind
+  required-field/role checks (codes `MissingRequiredParam`, `InvalidParamType`,
+  `TriggerHasIncomingConnection`) on top of the existing structural checks. An
+  http_request without a `url`, a branch without a `condition`, a switch without
+  `key`/`cases`, a loop without `over`, a wait without integer `duration_ms`, a
+  sub_workflow without `workflow_id|workflow`, an llm_call without `prompt`, an
+  mcp_tool_call without `tool`, a code_step without `wasm`+`function`, and a
+  trigger with an incoming edge are all rejected **at `validate()`** — which the
+  engine calls before executing, so the executor may assume validity. Surfaced
+  through the same `validate()` used by the server PUT and MCP. Knock-on test
+  fixes: engine/nodes/import/acceptance tests that previously built
+  intentionally-underspecified workflows were updated (give real params, or
+  reframed as "rejected before execute"). The n8n importer now synthesizes a
+  valid placeholder `condition`/`key`+`cases` for `if`/`switch` and flags it
+  (`WarningKind::PlaceholderParams`) instead of emitting IR the validator
+  rejects.
+- **M3 — verification & accuracy spine.** New crate **`a2w-verify`**:
+  `VerificationHarness` (DryRun, zero-token, deterministic runner); spec
+  assertions (`SpecAssertion`/`WorkflowSpec`); golden fixtures (`GoldenFixture`,
+  exact/multiset); a metamorphic-relation engine (`MetamorphicSuite`:
+  rerun-identity, permutation-invariance, duplication-scaling, additivity);
+  differential cross-checks (`cross_check_oracle`, `cross_check_workflows`); and
+  a **calibrated `ConfidenceReport`** that enumerates which checks ran/passed by
+  category and explicitly prints "NOT CHECKED" for empty categories. `score()`
+  is `0.0` for an empty report; `meets(Threshold)` requires a minimum number of
+  *metamorphic* relations — promotion can never be earned by "it ran".
+  Assertion/relation/oracle authoring is structurally decoupled from any
+  workflow generator. DoD tests: an injected filter fault is caught by a spec
+  assertion with no oracle; injected non-determinism is caught by
+  `rerun_identity`.
+- **M4 — skill library / workflow memory.** New crate **`a2w-skills`**:
+  `SkillLibrary::promote` stores a workflow **iff** its `ConfidenceReport`
+  clears the threshold **and** it passes M1; skills are indexed by
+  `TaskSignature` (query tokens + node-kind histogram) and retrieved by
+  similarity (deterministic ordering). `adapt` re-ids a skill; `compose_sequential`
+  splices skill A→B into a single validated single-trigger DAG. DoD test:
+  promote → retrieve for a similar query → compose, all green; an evidence-free
+  report and an invalid workflow are both refused.
+- **M5 — search / evolution over the IR.** New crate **`a2w-search`**:
+  validity-preserving mutation operators (`SetTransformField`,
+  `InsertPassthrough`, `RemovePassthrough`) and a **deterministic beam search**
+  (`evolve`) whose fitness is the M3 confidence score (ties broken by parsimony
+  then canonical form; **no RNG anywhere**). Every candidate is re-validated
+  (M1) and discarded if invalid. DoD test: search raises a deliberately-broken
+  seed from <1.0 to a perfect score on a held-out spec; a second run is
+  byte-identical (determinism).
+- **Whole-program acceptance:**
+  `crates/a2w-acceptance/tests/end_to_end_moat.rs` chains
+  validate → run (zero-token) → confidence report → promote → search → re-promote
+  for a non-trivial branching+transform alert-router workflow.
+
+### CI gate — run LOCALLY this session (NOT yet observed in GitHub CI)
+- `cargo build --workspace` — pass.
+- `cargo test --workspace` — **329 tests pass, 0 fail** (20 crates).
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo deny check` — advisories/bans/licenses/sources ok.
+- **Not done by me:** pushing to `main` / observing GitHub Actions. Per
+  invariant #3 CI-green is the definition of done; this is local-green only.
+  The CI workflow uses `--workspace` so the three new crates are covered
+  automatically, but that has not been confirmed on the runner.
+
+### Honest limitations / deferred
+- **Metamorphic relations vs. the engine.** A2W's engine is per-item-independent
+  and deterministic *by design*, so metamorphic relations over the trigger-input
+  list essentially always hold for structurally-valid workflows. They therefore
+  function as **engine-guarantee assertions** (catching non-determinism,
+  cross-item leakage, scaling regressions), not as workflow-*logic* fault
+  detectors. Logic faults are caught by spec assertions, golden fixtures, and
+  differential cross-checks. This is by design but worth stating plainly.
+- **M2** (the `a2w-expr` evaluator + `Transform.set` integration) pre-existed
+  this session and was not rebuilt; its DoD was treated as already met.
+- **M6** (query-adaptive sampling) not implemented — gated behind the
+  multi-tenant auth wall per the prompt.
+- `a2w-skills` / `a2w-search` are **in-memory libraries**; not persisted to
+  `a2w-store` and not yet exposed as MCP tools or REST endpoints.
+- `compose_sequential` connects every A-terminal to every B-entry (cartesian);
+  clean for single-terminal/single-entry graphs, can over-connect otherwise.
+
+### Crate count is now 20
+Added `a2w-verify`, `a2w-skills`, `a2w-search` to the workspace (members +
+`[workspace.dependencies]`). Build with the same `PATH` shim as below.
+
+---
+
 ## Where things are
 - **Repo:** `/home/harsh/A2W` (Linux build). Remote
   `https://github.com/gowdaharshith1998-lang/A2W` · branch **`main`**.
 - **Build:** Linux + rustup stable. C toolchain extracted to
   `~/.local/gcc-prefix/usr/bin` (no root); every cargo invocation needs
   `PATH="$HOME/.local/gcc-prefix/usr/bin:$HOME/.cargo/bin:$PATH"`.
-- **State:** **17 crates** (added `a2w-expr` + `a2w-bench`),
-  **285 tests, clippy-clean**. Every NodeKind has an executor now —
-  no `NoExecutorForKind` errors are possible from any structurally-valid
-  workflow. Three full adversarial-audit rounds completed; deferred work
-  list is **empty**.
+- **State:** **20 crates**, **329 tests, clippy-clean, cargo-deny clean**
+  (local). See the "SESSION: correctness/self-improvement build (M0–M5)"
+  section above for what landed this session; the notes below this point
+  describe the earlier hardening passes (which said "17 crates / 289 tests").
+  Every NodeKind has a tested executor.
 
 ## Round-3 work (this session)
 
