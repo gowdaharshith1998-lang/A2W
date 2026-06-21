@@ -1,4 +1,14 @@
+# Build artifacts
 /target
 
+# Local databases (sqlite dev/test)
 *.db
 *.db-*
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
