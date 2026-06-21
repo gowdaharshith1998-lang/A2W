@@ -59,8 +59,11 @@ holdout catches a fitness gap.
   `cargo clippy --workspace --all-targets -D warnings`, `cargo deny check`, and
   a release build of `a2w-server` + `a2w-mcp` (the Docker image binaries; Docker
   itself is not installed locally — the GitHub `docker` job builds the image).
-- **GitHub CI for the pushed commit: see the bottom of this file / the commit
-  status.** (Recorded after the push + `gh run watch`.)
+- **GitHub CI: GREEN.** Run `27896933276` (commit `309781b`, branch `main`)
+  completed `success` — all six jobs passed: rustfmt, clippy (`-D warnings`),
+  cargo test `--workspace --locked`, cargo-audit, cargo-deny, and the docker
+  build + smoke (boots the image, polls `/ready`). This commit (the doc update
+  recording the result) re-runs the same gate.
 
 ### Honest limitations (unchanged + new)
 - Engine-invariants assert engine guarantees only; outcome correctness still
