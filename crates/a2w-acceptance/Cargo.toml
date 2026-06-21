@@ -3,6 +3,7 @@ name = "a2w-acceptance"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "End-to-end vertical-slice acceptance tests proving the full A2W agent loop composes."
 
 # This crate exists only to host cross-crate integration tests; it has no

@@ -61,6 +61,10 @@ use a2w_engine::{Engine, ExecutionMode, MemoryEventLog, RunResult};
 use a2w_ir::{NodeKind, Workflow};
 use a2w_llm::{AnthropicClient, LlmClient};
 use a2w_optimizer::{analyze, apply, profile, IrOp};
+use a2w_search::{
+    evolve, InsertPassthrough, Mutation, RemovePassthrough, SearchConfig, SearchError,
+    SetTransformField,
+};
 use a2w_skills::PersistentSkillLibrary;
 use a2w_store::{Store, StoreCredentialResolver, Vault};
 use a2w_testkit::{run_tests, TestCase};
@@ -225,6 +229,32 @@ pub struct FindSkillInput {
     /// Max number of skills to return (defaults to 5).
     #[serde(default)]
     pub k: Option<usize>,
+}
+
+/// Input for `wf_search`: evolve a seed, ranked on the fitness plan and
+/// certified on a disjoint holdout.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchInput {
+    /// The seed workflow IR.
+    pub seed: Value,
+    /// The node whose output is "the result".
+    pub observe_node: String,
+    /// The fitness plan `{ spec?, golden?, semantic?, metamorphic? }`.
+    pub fitness: Value,
+    /// The disjoint holdout plan (same shape).
+    pub holdout: Value,
+    /// `set_transform_field` vocabulary: `[{ "key": ..., "value": ... }]`.
+    #[serde(default)]
+    pub set_fields: Value,
+    /// Enable the insert-passthrough structural operator.
+    #[serde(default)]
+    pub insert_passthrough: bool,
+    /// Enable the remove-passthrough structural operator.
+    #[serde(default)]
+    pub remove_passthrough: bool,
+    /// Generations budget (default 6).
+    #[serde(default)]
+    pub generations: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -888,6 +918,84 @@ impl A2wServer {
         Ok(json!({ "skills": out }))
     }
 
+    /// `wf_search` logic: evolve `seed`, ranking on the fitness plan and
+    /// certifying the winner on the disjoint holdout. RNG-free / deterministic.
+    /// Returns the holdout-certified score and the surfaced overfit gap.
+    ///
+    /// # Errors
+    /// [`ErrorData::invalid_params`] on bad input or non-disjoint plans.
+    pub async fn search_logic(&self, input: SearchInput) -> Result<Value, ErrorData> {
+        let seed = parse_workflow(input.seed)?;
+        let fparts: PlanParts = serde_json::from_value(input.fitness).map_err(|e| {
+            ErrorData::invalid_params(format!("`fitness` is not a valid plan: {e}"), None)
+        })?;
+        let hparts: PlanParts = serde_json::from_value(input.holdout).map_err(|e| {
+            ErrorData::invalid_params(format!("`holdout` is not a valid plan: {e}"), None)
+        })?;
+        let fitness = build_plan(
+            &input.observe_node,
+            fparts.spec,
+            fparts.golden,
+            fparts.semantic,
+            fparts.metamorphic,
+        )?;
+        let holdout = build_plan(
+            &input.observe_node,
+            hparts.spec,
+            hparts.golden,
+            hparts.semantic,
+            hparts.metamorphic,
+        )?;
+
+        let mut ops: Vec<Box<dyn Mutation>> = Vec::new();
+        if !input.set_fields.is_null() {
+            let entries: Vec<SetFieldEntry> =
+                serde_json::from_value(input.set_fields).map_err(|e| {
+                    ErrorData::invalid_params(format!("`set_fields` invalid: {e}"), None)
+                })?;
+            if !entries.is_empty() {
+                ops.push(Box::new(SetTransformField {
+                    vocabulary: entries.into_iter().map(|e| (e.key, e.value)).collect(),
+                    frozen: vec![],
+                }));
+            }
+        }
+        if input.insert_passthrough {
+            ops.push(Box::new(InsertPassthrough));
+        }
+        if input.remove_passthrough {
+            ops.push(Box::new(RemovePassthrough {
+                frozen: vec![input.observe_node.clone()],
+            }));
+        }
+        if ops.is_empty() {
+            return Err(ErrorData::invalid_params(
+                "search needs at least one operator (set_fields / insert_passthrough / \
+                 remove_passthrough)",
+                None,
+            ));
+        }
+        let mut cfg = SearchConfig::default();
+        if let Some(g) = input.generations {
+            cfg.generations = g;
+        }
+        let harness = VerificationHarness::new();
+        let outcome = evolve(&harness, &seed, &fitness, &holdout, &ops, cfg)
+            .await
+            .map_err(search_layer_error)?;
+        Ok(json!({
+            "initial_holdout_score": outcome.initial_holdout_score,
+            "best_fitness_score": outcome.best_fitness_score,
+            "best_holdout_score": outcome.best_holdout_score,
+            "certified_score": outcome.best_holdout_score,
+            "overfit_gap": outcome.overfit_gap,
+            "improved_on_holdout": outcome.improved_on_holdout(),
+            "candidates_evaluated": outcome.candidates_evaluated,
+            "best_workflow": outcome.best_workflow,
+            "holdout_summary": outcome.best_holdout_report.summary(),
+        }))
+    }
+
     /// Borrow the store, or return an `invalid_params` error naming the fix.
     fn require_store(&self) -> Result<&Arc<Store>, ErrorData> {
         self.store.as_ref().ok_or_else(|| {
@@ -900,7 +1008,8 @@ impl A2wServer {
     }
 }
 
-/// The plan parts shared by `wf_verify` and the `holdout` of `wf_promote_skill`.
+/// The plan parts shared by `wf_verify`, `wf_promote_skill`'s holdout, and
+/// `wf_search`'s fitness/holdout.
 #[derive(Debug, Deserialize)]
 struct PlanParts {
     #[serde(default)]
@@ -911,6 +1020,13 @@ struct PlanParts {
     semantic: Option<Value>,
     #[serde(default)]
     metamorphic: Option<Value>,
+}
+
+/// One `set_transform_field` vocabulary entry for `wf_search`.
+#[derive(Debug, Deserialize)]
+struct SetFieldEntry {
+    key: String,
+    value: Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,6 +1281,24 @@ impl A2wServer {
         ok(self.find_skill_logic(input).await?)
     }
 
+    /// Evolve a seed workflow, certifying the winner on a disjoint holdout.
+    #[tool(
+        name = "wf_search",
+        description = "Evolve a seed workflow with validity-preserving mutations. \
+                       Input { seed, observe_node, fitness, holdout, set_fields?, \
+                       insert_passthrough?, remove_passthrough?, generations? }. \
+                       Ranks candidates on the FITNESS plan and certifies the \
+                       winner on the disjoint HOLDOUT (rejects non-disjoint \
+                       plans). Deterministic / RNG-free. Returns the \
+                       holdout-certified score, overfit_gap, and best_workflow."
+    )]
+    pub async fn wf_search(
+        &self,
+        Parameters(input): Parameters<SearchInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok(self.search_logic(input).await?)
+    }
+
     /// Author a workflow from a plain-English prompt (Generate→Validate→Repair).
     #[tool(
         name = "generate_workflow_from_prompt",
@@ -1321,6 +1455,18 @@ fn build_plan(
 /// node or an unrunnable workflow is something the agent can fix).
 fn verify_error(err: a2w_verify::VerifyError) -> ErrorData {
     ErrorData::invalid_params(format!("verification failed: {err}"), None)
+}
+
+/// Map a search-layer error to a tool error. Correlated fitness/holdout
+/// evidence (F3) is the caller's mistake → `invalid_params`.
+fn search_layer_error(err: SearchError) -> ErrorData {
+    match err {
+        SearchError::CorrelatedEvidence(m) => ErrorData::invalid_params(
+            format!("fitness and holdout must be evidence-disjoint: {m}"),
+            None,
+        ),
+        SearchError::Verify(v) => ErrorData::invalid_params(format!("search failed: {v}"), None),
+    }
 }
 
 /// Map a skill-promotion error to a tool error, attaching the calibrated

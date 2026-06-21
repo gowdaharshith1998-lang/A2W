@@ -28,9 +28,18 @@ allow = [
     # (https://cdla.dev/permissive-2-0/) — a permissive, attribution-only
     # data-sharing licence with no copyleft implications for the binary.
     "CDLA-Permissive-2.0",
+    # A2W's own workspace crates are PROPRIETARY (not open source). They carry
+    # the SPDX custom ref `LicenseRef-Proprietary`; allow it so the local crates
+    # pass the licence check. (Third-party deps remain their permissive OSI
+    # licences above.)
+    "LicenseRef-Proprietary",
 ]
 confidence-threshold = 0.92
 exceptions = []
+
+# Belt-and-suspenders: the workspace crates are all `publish = false`, so even
+# if the licence ref above were dropped, cargo-deny would skip them as private.
+private = { ignore = true }
 
 [bans]
 multiple-versions = "warn"

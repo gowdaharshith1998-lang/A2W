@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "wf_order_pricing",
+  "name": "Order pricing — line totals",
+  "nodes": [
+    { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+    {
+      "id": "price",
+      "kind": "transform",
+      "params": { "set": { "total": "${{ $.price * $.qty }}" } }
+    }
+  ],
+  "connections": [
+    { "from_node": "trigger", "from_port": 0, "to_node": "price" }
+  ]
+}

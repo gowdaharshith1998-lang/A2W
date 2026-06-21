@@ -3,6 +3,7 @@ name = "a2w-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "MCP (Model Context Protocol) stdio server exposing A2W workflow authoring/validation/run/test/profile/optimize logic as agent-callable wf_* tools."
 
 [[bin]]
@@ -22,6 +23,7 @@ a2w-author = { workspace = true }
 a2w-store = { workspace = true }
 a2w-verify = { workspace = true }
 a2w-skills = { workspace = true }
+a2w-search = { workspace = true }
 rmcp = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std"] }
 serde = { workspace = true }

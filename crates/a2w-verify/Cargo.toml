@@ -3,6 +3,7 @@ name = "a2w-verify"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W verification & accuracy spine: golden fixtures, metamorphic relations, differential cross-checks, and a calibrated confidence report over zero-token deterministic runs."
 
 [dependencies]

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "wf_order_items_loop",
+  "name": "Order items — fan out line items",
+  "nodes": [
+    { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+    { "id": "expand", "kind": "loop", "params": { "over": "/items" } },
+    {
+      "id": "process",
+      "kind": "transform",
+      "params": { "set": { "processed": true } }
+    },
+    {
+      "id": "summary",
+      "kind": "transform",
+      "params": { "set": { "kind": "loop_summary" } }
+    }
+  ],
+  "connections": [
+    { "from_node": "trigger", "from_port": 0, "to_node": "expand" },
+    { "from_node": "expand", "from_port": 0, "to_node": "process" },
+    { "from_node": "expand", "from_port": 1, "to_node": "summary" }
+  ]
+}

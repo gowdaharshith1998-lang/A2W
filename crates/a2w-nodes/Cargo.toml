@@ -3,6 +3,7 @@ name = "a2w-nodes"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W core node executors: WebhookTrigger, HttpRequest, Transform, McpToolCall, CodeStep."
 
 [dependencies]

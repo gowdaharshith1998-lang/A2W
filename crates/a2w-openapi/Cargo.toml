@@ -3,6 +3,7 @@ name = "a2w-openapi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Generate A2W integration manifests (actions + HTTP bindings + JSON-Schema) from OpenAPI specs."
 
 [dependencies]

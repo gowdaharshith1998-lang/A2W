@@ -11,7 +11,7 @@ use std::sync::Arc;
 use a2w_llm::MockLlm;
 use a2w_mcp::{
     A2wServer, ApplyOpsInput, DeleteCredentialInput, FindSkillInput, GetTemplateInput, McpPolicy,
-    OptimizeInput, PromoteSkillInput, RunInput, RunTestsInput, SearchTemplatesInput,
+    OptimizeInput, PromoteSkillInput, RunInput, RunTestsInput, SearchInput, SearchTemplatesInput,
     StoreCredentialInput, VerifyInput, WorkflowInput,
 };
 use a2w_store::{Store, Vault};
@@ -859,4 +859,76 @@ async fn skill_tools_without_store_return_invalid_params() {
         .await
         .expect_err("no store → error");
     assert!(err.message.contains("persistence"), "msg: {}", err.message);
+}
+
+// ---- F5/M5: evolve over the served surface (wf_search) --------------------
+
+#[tokio::test]
+async fn wf_search_evolves_and_certifies_on_holdout() {
+    let server = server_allow_all();
+    // Broken pricing: total from the WRONG field (`cost`).
+    let seed = json!({
+        "schema_version": 1, "id": "wf_price_broken", "name": "broken",
+        "nodes": [
+            { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+            { "id": "price", "kind": "transform",
+              "params": { "set": { "total": "${{ $.cost * $.qty }}" } } }
+        ],
+        "connections": [ { "from_node": "trigger", "from_port": 0, "to_node": "price" } ]
+    });
+    let golden = |name: &str, p: i64, q: i64, c: i64| {
+        json!({
+            "name": name,
+            "input": [ { "price": p, "qty": q, "cost": c } ],
+            "expected": [ { "price": p, "qty": q, "cost": c, "total": (p*q) as f64 } ],
+            "match_mode": "exact"
+        })
+    };
+    let out = server
+        .search_logic(SearchInput {
+            seed,
+            observe_node: "price".to_string(),
+            fitness: json!({ "golden": [ golden("fit", 10, 2, 7) ] }),
+            holdout: json!({ "golden": [ golden("hold", 5, 3, 99) ] }),
+            set_fields: json!([ { "key": "total", "value": "${{ $.price * $.qty }}" } ]),
+            insert_passthrough: true,
+            remove_passthrough: false,
+            generations: None,
+        })
+        .await
+        .expect("search");
+    assert_eq!(out["certified_score"], json!(1.0), "out: {out}");
+    assert_eq!(out["improved_on_holdout"], json!(true));
+    assert_eq!(out["overfit_gap"], json!(0.0));
+}
+
+#[tokio::test]
+async fn wf_search_rejects_correlated_plans() {
+    let server = server_allow_all();
+    let seed = json!({
+        "schema_version": 1, "id": "wf_tag", "name": "tag",
+        "nodes": [
+            { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+            { "id": "tag", "kind": "transform", "params": { "set": { "tagged": true } } }
+        ],
+        "connections": [ { "from_node": "trigger", "from_port": 0, "to_node": "tag" } ]
+    });
+    let shared = json!({
+        "golden": [ { "name": "same", "input": [ { "id": 0 } ],
+                      "expected": [ { "id": 0, "tagged": true } ], "match_mode": "exact" } ]
+    });
+    let err = server
+        .search_logic(SearchInput {
+            seed,
+            observe_node: "tag".to_string(),
+            fitness: shared.clone(),
+            holdout: shared,
+            set_fields: json!([ { "key": "x", "value": 1 } ]),
+            insert_passthrough: false,
+            remove_passthrough: false,
+            generations: None,
+        })
+        .await
+        .expect_err("correlated plans must be rejected");
+    assert!(err.message.contains("disjoint"), "msg: {}", err.message);
 }

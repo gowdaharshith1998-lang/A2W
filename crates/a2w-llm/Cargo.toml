@@ -3,6 +3,7 @@ name = "a2w-llm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Provider-agnostic, authoring-time LLM client for A2W (Anthropic Messages API + a deterministic in-memory mock)."
 
 [dependencies]

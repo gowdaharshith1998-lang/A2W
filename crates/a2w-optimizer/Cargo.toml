@@ -3,6 +3,7 @@ name = "a2w-optimizer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W run profiler and structural optimizer: critical-path profiling and parallelize/dead-node suggestions."
 
 [dependencies]

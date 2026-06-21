@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "wf_severity_switch",
+  "name": "Severity switch — multi-way routing",
+  "nodes": [
+    { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+    {
+      "id": "sw",
+      "kind": "switch",
+      "params": {
+        "key": "/severity",
+        "cases": [
+          { "value": "critical", "port": 0 },
+          { "value": "warning", "port": 1 },
+          { "value": "info", "port": 2 }
+        ],
+        "default_port": 3
+      }
+    },
+    { "id": "page",    "kind": "transform", "params": { "set": { "routed": "critical" } } },
+    { "id": "ticket",  "kind": "transform", "params": { "set": { "routed": "warning" } } },
+    { "id": "log",     "kind": "transform", "params": { "set": { "routed": "info" } } },
+    { "id": "discard", "kind": "transform", "params": { "set": { "routed": "default" } } }
+  ],
+  "connections": [
+    { "from_node": "trigger", "from_port": 0, "to_node": "sw" },
+    { "from_node": "sw", "from_port": 0, "to_node": "page" },
+    { "from_node": "sw", "from_port": 1, "to_node": "ticket" },
+    { "from_node": "sw", "from_port": 2, "to_node": "log" },
+    { "from_node": "sw", "from_port": 3, "to_node": "discard" }
+  ]
+}

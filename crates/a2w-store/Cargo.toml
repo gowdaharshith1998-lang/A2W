@@ -3,6 +3,7 @@ name = "a2w-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W persistence: workflows, run history, and an AES-256-GCM encrypted credential vault (SQLite via sqlx)."
 
 [dependencies]

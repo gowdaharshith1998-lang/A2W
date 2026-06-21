@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "wf_enrich_merge",
+  "name": "Enrich + merge — concurrent diamond",
+  "nodes": [
+    { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+    { "id": "region", "kind": "transform", "params": { "set": { "region": "us-east" } } },
+    { "id": "tier",   "kind": "transform", "params": { "set": { "tier": "gold" } } },
+    { "id": "merge",  "kind": "merge",     "params": {} }
+  ],
+  "connections": [
+    { "from_node": "trigger", "from_port": 0, "to_node": "region" },
+    { "from_node": "trigger", "from_port": 0, "to_node": "tier" },
+    { "from_node": "region", "from_port": 0, "to_node": "merge" },
+    { "from_node": "tier",   "from_port": 0, "to_node": "merge" }
+  ]
+}

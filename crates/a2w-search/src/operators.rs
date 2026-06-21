@@ -10,7 +10,10 @@ use a2w_ir::{Connection, Node, NodeKind, Workflow};
 use serde_json::{Map, Value};
 
 /// A validity-preserving mutation operator.
-pub trait Mutation {
+///
+/// `Send + Sync` so `Box<dyn Mutation>` can be held across `.await` points in
+/// async server/MCP handlers (the search future must be `Send`).
+pub trait Mutation: Send + Sync {
     /// A stable name for diagnostics.
     fn name(&self) -> &str;
     /// Produce zero or more candidate workflows derived from `wf`. Each should

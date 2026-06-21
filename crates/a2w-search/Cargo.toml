@@ -3,6 +3,7 @@ name = "a2w-search"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W search / evolution over the IR: correctness-preserving mutation operators (validity-preserving) with the M3 confidence report as the fitness function."
 
 [dependencies]

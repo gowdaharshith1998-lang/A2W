@@ -3,6 +3,7 @@ name = "a2w-import"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Best-effort importer: n8n workflow JSON -> A2W IR."
 
 [dependencies]

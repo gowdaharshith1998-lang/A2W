@@ -17,7 +17,7 @@ and the system emits <em>calibrated evidence</em> that the outcome is correct, n
 <img alt="crates" src="https://img.shields.io/badge/crates-20-5ac8fa?style=flat-square" />
 <img alt="tests" src="https://img.shields.io/badge/tests-346%20passing-30d158?style=flat-square" />
 <img alt="execution" src="https://img.shields.io/badge/execution-deterministic%20%C2%B7%20zero--token-7d7bff?style=flat-square" />
-<img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-bf5af2?style=flat-square" />
+<img alt="license" src="https://img.shields.io/badge/license-Proprietary-bf5af2?style=flat-square" />
 </p>
 
 <p>
@@ -164,4 +164,6 @@ is gated behind the multi-tenant auth wall; Postgres needs SQL-portability work.
 - **[Production guide](./docs/PRODUCTION.md)** — env-var contract, endpoints, Docker, threat model.
 - **[Engineering log](./docs/CONTINUATION.md)** — the build/audit history and current state.
 
+<div align="center">
+<sub><strong>Proprietary — © 2026 Harshith Gowda. All rights reserved.</strong> Not open source; see <a href="./LICENSE">LICENSE</a>. Viewing this repository grants no license to use, copy, modify, or distribute the software.</sub>
 </div>

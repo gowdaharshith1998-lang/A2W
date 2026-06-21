@@ -3,6 +3,7 @@ name = "a2w-expr"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W expression engine: a tiny safe DSL for computed values in workflow params (path lookups, comparisons, boolean logic, a small set of built-in functions)."
 
 [dependencies]

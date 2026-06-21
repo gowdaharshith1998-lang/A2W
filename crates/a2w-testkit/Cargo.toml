@@ -3,6 +3,7 @@ name = "a2w-testkit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W workflow test cases and runner: declarative expectations evaluated against engine runs."
 
 [dependencies]

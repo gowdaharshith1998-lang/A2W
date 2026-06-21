@@ -3,6 +3,7 @@ name = "a2w-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W execution engine: runs a workflow IR as a concurrent async DAG with guaranteed item lineage."
 
 [dependencies]

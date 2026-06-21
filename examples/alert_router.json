@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "wf_alert_router",
+  "name": "Alert router — escalate high priority",
+  "nodes": [
+    { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+    {
+      "id": "classify",
+      "kind": "branch",
+      "params": { "condition": { "path": "/priority", "op": "eq", "value": "high" } }
+    },
+    {
+      "id": "escalate",
+      "kind": "transform",
+      "params": { "set": { "escalated": true } }
+    },
+    {
+      "id": "note",
+      "kind": "transform",
+      "params": { "set": { "noted": true } }
+    }
+  ],
+  "connections": [
+    { "from_node": "trigger", "from_port": 0, "to_node": "classify" },
+    { "from_node": "classify", "from_port": 0, "to_node": "escalate" },
+    { "from_node": "classify", "from_port": 1, "to_node": "note" }
+  ]
+}

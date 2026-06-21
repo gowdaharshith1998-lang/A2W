@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "wf_deep_pipeline",
+  "name": "Deep linear pipeline — staged transforms",
+  "nodes": [
+    { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+    { "id": "normalize", "kind": "transform", "params": { "set": { "normalized": true } } },
+    { "id": "annotate",  "kind": "transform", "params": { "set": { "source": "a2w" } } },
+    { "id": "finalize",  "kind": "transform", "params": { "set": { "ready": true } } }
+  ],
+  "connections": [
+    { "from_node": "trigger", "from_port": 0, "to_node": "normalize" },
+    { "from_node": "normalize", "from_port": 0, "to_node": "annotate" },
+    { "from_node": "annotate", "from_port": 0, "to_node": "finalize" }
+  ]
+}

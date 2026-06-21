@@ -210,6 +210,7 @@ pub fn app_with_config_and_metrics(
         .route("/runs/{run_id}", get(handlers::get_run))
         // F4: verification + skill library over the served surface.
         .route("/verify", post(handlers::verify_workflow))
+        .route("/search", post(handlers::search_workflow))
         .route(
             "/skills",
             get(handlers::find_skills).post(handlers::promote_skill),
@@ -422,6 +423,71 @@ mod tests {
             resp.status(),
             StatusCode::UNPROCESSABLE_ENTITY,
             "evidence-free holdout must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_endpoint_evolves_and_certifies_on_holdout() {
+        let app = test_app().await;
+        // Broken pricing seed: total derived from the WRONG field (`cost`).
+        let seed = serde_json::json!({
+            "schema_version": 1, "id": "wf_price_broken", "name": "broken",
+            "nodes": [
+                { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+                { "id": "price", "kind": "transform",
+                  "params": { "set": { "total": "${{ $.cost * $.qty }}" } } }
+            ],
+            "connections": [ { "from_node": "trigger", "from_port": 0, "to_node": "price" } ]
+        });
+        let golden = |name: &str, p: i64, q: i64, c: i64| {
+            serde_json::json!({
+                "name": name,
+                "input": [ { "price": p, "qty": q, "cost": c } ],
+                "expected": [ { "price": p, "qty": q, "cost": c, "total": (p*q) as f64 } ],
+                "match_mode": "exact"
+            })
+        };
+        let body = serde_json::json!({
+            "seed": seed,
+            "observe_node": "price",
+            "fitness": { "golden": [ golden("fit", 10, 2, 7) ] },
+            "holdout": { "golden": [ golden("hold", 5, 3, 99) ] },
+            "set_fields": [ { "key": "total", "value": "${{ $.price * $.qty }}" } ],
+            "insert_passthrough": true
+        });
+        let resp = app
+            .oneshot(json_req("POST", "/search", &body))
+            .await
+            .expect("search response");
+        assert_eq!(resp.status(), StatusCode::OK, "search should succeed");
+        let out = body_json(resp).await;
+        assert_eq!(out["certified_score"], serde_json::json!(1.0), "out: {out}");
+        assert_eq!(out["improved_on_holdout"], serde_json::json!(true));
+        assert_eq!(out["overfit_gap"], serde_json::json!(0.0));
+    }
+
+    #[tokio::test]
+    async fn search_rejects_correlated_fitness_holdout() {
+        let app = test_app().await;
+        let seed = tagging_wf_json("wf_tag");
+        // Identical golden fixture in both plans → correlated → rejected.
+        let shared = serde_json::json!({
+            "golden": [ { "name": "same", "input": [ { "id": 0 } ],
+                          "expected": [ { "id": 0, "tagged": true } ], "match_mode": "exact" } ]
+        });
+        let body = serde_json::json!({
+            "seed": seed, "observe_node": "tag",
+            "fitness": shared, "holdout": shared,
+            "set_fields": [ { "key": "x", "value": 1 } ]
+        });
+        let resp = app
+            .oneshot(json_req("POST", "/search", &body))
+            .await
+            .expect("search response");
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "correlated fitness/holdout must be rejected"
         );
     }
 

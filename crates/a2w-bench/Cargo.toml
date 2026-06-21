@@ -3,6 +3,7 @@ name = "a2w-bench"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Criterion benchmarks for A2W's hot paths: engine scheduling, validator, expression engine, vault encrypt/decrypt, sqlite save_run."
 
 [dependencies]

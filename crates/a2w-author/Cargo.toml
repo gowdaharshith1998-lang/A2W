@@ -3,6 +3,7 @@ name = "a2w-author"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Text-to-workflow authoring for A2W: a Generate -> Validate -> Repair loop turning a plain-English prompt into a valid, dry-runnable workflow IR."
 
 [dependencies]

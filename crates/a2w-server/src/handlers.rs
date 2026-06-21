@@ -15,6 +15,10 @@ use serde_json::{json, Value};
 
 use a2w_engine::{ExecutionMode, MemoryEventLog, StepEvent};
 use a2w_ir::Workflow;
+use a2w_search::{
+    evolve, InsertPassthrough, Mutation, RemovePassthrough, SearchConfig, SearchError,
+    SetTransformField,
+};
 use a2w_skills::PersistentSkillLibrary;
 use a2w_store::{workflow_fingerprint, ApprovalRecord, IdempotencyClaim, StoreResumeSource, Vault};
 use a2w_verify::{
@@ -1173,4 +1177,113 @@ pub async fn find_skills(
         })
         .collect();
     Ok(Json(json!({ "skills": skills })))
+}
+
+/// A single `set_transform_field` vocabulary entry for the search operator.
+#[derive(Debug, Deserialize)]
+pub struct SetFieldEntry {
+    /// The field key to set on a Transform node.
+    pub key: String,
+    /// The value (may be a `${{ ... }}` expression string).
+    pub value: Value,
+}
+
+/// `POST /search` body — evolve a seed, certifying the winner on the holdout.
+#[derive(Debug, Deserialize)]
+pub struct SearchRequest {
+    /// The seed workflow IR.
+    pub seed: Value,
+    /// The node whose output is "the result" (must survive in every candidate).
+    pub observe_node: String,
+    /// The fitness plan the search ranks candidates against.
+    pub fitness: PlanParts,
+    /// The disjoint holdout plan the winner is certified on.
+    pub holdout: PlanParts,
+    /// `set_transform_field` operator vocabulary (the main semantic lever).
+    #[serde(default)]
+    pub set_fields: Vec<SetFieldEntry>,
+    /// Enable the insert-passthrough structural operator.
+    #[serde(default)]
+    pub insert_passthrough: bool,
+    /// Enable the remove-passthrough structural operator.
+    #[serde(default)]
+    pub remove_passthrough: bool,
+    /// Optional search budget overrides.
+    #[serde(default)]
+    pub generations: Option<usize>,
+    /// Beam width override.
+    #[serde(default)]
+    pub beam_width: Option<usize>,
+}
+
+/// `POST /search` — run validity-preserving evolutionary search over the IR,
+/// **ranking on the fitness plan and certifying the winner on the disjoint
+/// holdout**. Returns the holdout-certified score and the surfaced overfit gap;
+/// the fitness score is reported as diagnostics only, never as certification.
+pub async fn search_workflow(
+    State(_state): State<AppState>,
+    Json(req): Json<SearchRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let seed = parse_wf(req.seed)?;
+    let fitness = build_plan(&req.observe_node, req.fitness)?;
+    let holdout = build_plan(&req.observe_node, req.holdout)?;
+
+    let mut ops: Vec<Box<dyn Mutation>> = Vec::new();
+    if !req.set_fields.is_empty() {
+        ops.push(Box::new(SetTransformField {
+            vocabulary: req
+                .set_fields
+                .into_iter()
+                .map(|e| (e.key, e.value))
+                .collect(),
+            frozen: vec![],
+        }));
+    }
+    if req.insert_passthrough {
+        ops.push(Box::new(InsertPassthrough));
+    }
+    if req.remove_passthrough {
+        ops.push(Box::new(RemovePassthrough {
+            frozen: vec![req.observe_node.clone()],
+        }));
+    }
+    if ops.is_empty() {
+        return Err(ApiError::BadRequest(
+            "search needs at least one operator: set_fields, insert_passthrough, or \
+             remove_passthrough"
+                .into(),
+        ));
+    }
+
+    let mut cfg = SearchConfig::default();
+    if let Some(g) = req.generations {
+        cfg.generations = g;
+    }
+    if let Some(b) = req.beam_width {
+        cfg.beam_width = b;
+    }
+
+    let harness = VerificationHarness::new();
+    let outcome = evolve(&harness, &seed, &fitness, &holdout, &ops, cfg)
+        .await
+        .map_err(|e| match e {
+            SearchError::CorrelatedEvidence(m) => ApiError::BadRequest(format!(
+                "fitness and holdout must be evidence-disjoint: {m}"
+            )),
+            SearchError::Verify(v) => ApiError::Unprocessable(format!("search failed: {v}")),
+        })?;
+
+    Ok(Json(json!({
+        "initial_fitness_score": outcome.initial_fitness_score,
+        "initial_holdout_score": outcome.initial_holdout_score,
+        "best_fitness_score": outcome.best_fitness_score,
+        "best_holdout_score": outcome.best_holdout_score,
+        "certified_score": outcome.best_holdout_score,
+        "overfit_gap": outcome.overfit_gap,
+        "improved_on_holdout": outcome.improved_on_holdout(),
+        "candidates_evaluated": outcome.candidates_evaluated,
+        "generations_run": outcome.generations_run,
+        "best_workflow": outcome.best_workflow,
+        "holdout_summary": outcome.best_holdout_report.summary(),
+    })))
 }

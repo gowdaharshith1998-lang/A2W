@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "wf_http_fetch_shape",
+  "name": "HTTP fetch + shape (mocked in dry-run / zero-token)",
+  "nodes": [
+    { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+    {
+      "id": "fetch",
+      "kind": "http_request",
+      "params": { "url": "https://example.com/api/items", "method": "GET" }
+    },
+    {
+      "id": "shape",
+      "kind": "transform",
+      "params": { "set": { "shaped": true } }
+    }
+  ],
+  "connections": [
+    { "from_node": "trigger", "from_port": 0, "to_node": "fetch" },
+    { "from_node": "fetch", "from_port": 0, "to_node": "shape" }
+  ]
+}

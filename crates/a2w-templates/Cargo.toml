@@ -3,6 +3,7 @@ name = "a2w-templates"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A golden corpus of valid A2W workflow templates used as few-shot examples for text-to-workflow authoring."
 
 [dependencies]

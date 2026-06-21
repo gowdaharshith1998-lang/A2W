@@ -3,6 +3,7 @@ name = "a2w-skills"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "A2W skill library / workflow memory: promote verification-cleared workflows into a reusable, task-signature-indexed library and retrieve/compose them for new queries."
 
 [dependencies]
