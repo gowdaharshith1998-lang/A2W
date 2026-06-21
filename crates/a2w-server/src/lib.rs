@@ -208,6 +208,12 @@ pub fn app_with_config_and_metrics(
             get(handlers::get_approval).post(handlers::decide_approval),
         )
         .route("/runs/{run_id}", get(handlers::get_run))
+        // F4: verification + skill library over the served surface.
+        .route("/verify", post(handlers::verify_workflow))
+        .route(
+            "/skills",
+            get(handlers::find_skills).post(handlers::promote_skill),
+        )
         .route(
             "/credentials",
             get(handlers::list_credentials).post(handlers::store_credential),
@@ -313,6 +319,110 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["status"], "ok");
+    }
+
+    /// A tagging workflow JSON `{ trigger -> tag(set tagged=true) }`.
+    fn tagging_wf_json(id: &str) -> Value {
+        serde_json::json!({
+            "schema_version": 1, "id": id, "name": id,
+            "nodes": [
+                { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+                { "id": "tag", "kind": "transform", "params": { "set": { "tagged": true } } }
+            ],
+            "connections": [ { "from_node": "trigger", "from_port": 0, "to_node": "tag" } ]
+        })
+    }
+
+    #[tokio::test]
+    async fn verify_endpoint_separates_outcome_from_engine() {
+        let app = test_app().await;
+        let body = serde_json::json!({
+            "workflow": tagging_wf_json("wf_v"),
+            "observe_node": "tag",
+            "spec": {
+                "input": [ { "id": 0 } ],
+                "assertions": [
+                    { "kind": "every_item_field_equals", "path": "/tagged", "value": true }
+                ]
+            },
+            "semantic": [ { "CountConservation": { "input": [ { "id": 0 } ] } } ],
+            "metamorphic": { "seed": [ { "id": 0 } ], "rerun_identity": true }
+        });
+        let resp = app
+            .oneshot(json_req("POST", "/verify", &body))
+            .await
+            .expect("verify response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["outcome_score"], serde_json::json!(1.0));
+        assert_eq!(json["outcome_verified"], serde_json::json!(true));
+        assert!(json["summary"].as_str().unwrap().contains("OUTCOME"));
+    }
+
+    #[tokio::test]
+    async fn skills_promote_then_find_through_rest() {
+        let app = test_app().await;
+        let holdout = serde_json::json!({
+            "spec": {
+                "input": [ { "id": 0 }, { "id": 1 } ],
+                "assertions": [
+                    { "kind": "every_item_field_equals", "path": "/tagged", "value": true }
+                ]
+            },
+            "semantic": [
+                { "AppendAddsOutputs": {
+                    "base_input": [ { "id": 0 }, { "id": 1 } ],
+                    "passing_extra": [ { "id": 9 } ],
+                    "per_item": 1
+                } }
+            ]
+        });
+        let promote_body = serde_json::json!({
+            "query": "tag incoming alerts",
+            "workflow": tagging_wf_json("wf_skill"),
+            "observe_node": "tag",
+            "holdout": holdout,
+        });
+        let resp = app
+            .clone()
+            .oneshot(json_req("POST", "/skills", &promote_body))
+            .await
+            .expect("promote response");
+        assert_eq!(resp.status(), StatusCode::OK, "promote should succeed");
+        let promoted = body_json(resp).await;
+        let id = promoted["promoted"].as_str().expect("id").to_string();
+        assert_eq!(promoted["holdout_score"], serde_json::json!(1.0));
+
+        // Retrieve it for a similar query via GET /skills?query=...
+        let resp = app
+            .oneshot(get("/skills?query=tag%20the%20alerts&k=5"))
+            .await
+            .expect("find response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let found = body_json(resp).await;
+        let skills = found["skills"].as_array().expect("skills array");
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0]["id"], serde_json::json!(id));
+    }
+
+    #[tokio::test]
+    async fn skills_promote_rejects_evidence_free_holdout() {
+        let app = test_app().await;
+        let body = serde_json::json!({
+            "query": "tag",
+            "workflow": tagging_wf_json("wf_skill"),
+            "observe_node": "tag",
+            "holdout": {},
+        });
+        let resp = app
+            .oneshot(json_req("POST", "/skills", &body))
+            .await
+            .expect("promote response");
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "evidence-free holdout must be rejected"
+        );
     }
 
     #[tokio::test]

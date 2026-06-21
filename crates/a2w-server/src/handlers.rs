@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse};
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,12 @@ use serde_json::{json, Value};
 
 use a2w_engine::{ExecutionMode, MemoryEventLog, StepEvent};
 use a2w_ir::Workflow;
+use a2w_skills::PersistentSkillLibrary;
 use a2w_store::{workflow_fingerprint, ApprovalRecord, IdempotencyClaim, StoreResumeSource, Vault};
+use a2w_verify::{
+    verify, GoldenFixture, MetamorphicSuite, SemanticRelation, SemanticSuite, Threshold,
+    VerificationHarness, VerificationPlan, WorkflowSpec,
+};
 
 use crate::dashboard::DASHBOARD_HTML;
 use crate::error::ApiError;
@@ -993,4 +998,179 @@ pub async fn delete_credential(
     let _ = require_vault(&state)?;
     Vault::delete_credential(&state.store, &id).await?;
     Ok(Json(json!({ "deleted": id })))
+}
+
+// ---------------------------------------------------------------------------
+// F4: verification + skill library over the REST surface.
+// ---------------------------------------------------------------------------
+
+/// The plan parts shared by `/verify` and the `holdout` of `/skills`.
+#[derive(Debug, Default, Deserialize)]
+pub struct PlanParts {
+    /// Spec assertions `{ input, assertions }` (outcome evidence).
+    #[serde(default)]
+    pub spec: Option<Value>,
+    /// Golden fixtures (outcome evidence).
+    #[serde(default)]
+    pub golden: Option<Value>,
+    /// Spec-derived semantic relations (outcome evidence).
+    #[serde(default)]
+    pub semantic: Option<Value>,
+    /// Engine-invariant metamorphic suite (NOT outcome evidence).
+    #[serde(default)]
+    pub metamorphic: Option<Value>,
+}
+
+/// `POST /verify` body.
+#[derive(Debug, Deserialize)]
+pub struct VerifyRequest {
+    /// The workflow IR document.
+    pub workflow: Value,
+    /// The node whose output is "the result".
+    pub observe_node: String,
+    /// The plan parts (spec / golden / semantic / metamorphic).
+    #[serde(flatten)]
+    pub plan: PlanParts,
+}
+
+/// `POST /skills` body — verify on the holdout, then promote.
+#[derive(Debug, Deserialize)]
+pub struct PromoteRequest {
+    /// The natural-language query the workflow solves.
+    pub query: String,
+    /// The workflow IR document.
+    pub workflow: Value,
+    /// The node whose output is "the result".
+    pub observe_node: String,
+    /// The holdout verification plan; promotion is gated on its report.
+    pub holdout: PlanParts,
+}
+
+/// `GET /skills` query params.
+#[derive(Debug, Deserialize)]
+pub struct FindParams {
+    /// Optional free-text query; when present, results are ranked by signature
+    /// similarity. When absent, all skills are returned (ordered by id).
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Max results (defaults to 20).
+    #[serde(default)]
+    pub k: Option<usize>,
+}
+
+/// Build a typed [`VerificationPlan`] from untyped JSON plan parts.
+fn build_plan(observe_node: &str, parts: PlanParts) -> Result<VerificationPlan, ApiError> {
+    let mut plan = VerificationPlan::new(observe_node);
+    if let Some(spec) = parts.spec {
+        let spec: WorkflowSpec = serde_json::from_value(spec)
+            .map_err(|e| ApiError::BadRequest(format!("`spec` is invalid: {e}")))?;
+        plan = plan.with_spec(spec);
+    }
+    if let Some(golden) = parts.golden {
+        let golden: Vec<GoldenFixture> = serde_json::from_value(golden)
+            .map_err(|e| ApiError::BadRequest(format!("`golden` is invalid: {e}")))?;
+        plan = plan.with_golden(golden);
+    }
+    if let Some(semantic) = parts.semantic {
+        let relations: Vec<SemanticRelation> = serde_json::from_value(semantic)
+            .map_err(|e| ApiError::BadRequest(format!("`semantic` is invalid: {e}")))?;
+        plan = plan.with_semantic(SemanticSuite::new(relations));
+    }
+    if let Some(metamorphic) = parts.metamorphic {
+        let suite: MetamorphicSuite = serde_json::from_value(metamorphic)
+            .map_err(|e| ApiError::BadRequest(format!("`metamorphic` is invalid: {e}")))?;
+        plan = plan.with_metamorphic(suite);
+    }
+    Ok(plan)
+}
+
+fn parse_wf(value: Value) -> Result<Workflow, ApiError> {
+    serde_json::from_value(value)
+        .map_err(|e| ApiError::BadRequest(format!("`workflow` is not a valid IR document: {e}")))
+}
+
+/// `POST /verify` — run a verification plan (zero-token) and return a
+/// calibrated confidence report. Engine-invariants are reported separately from
+/// outcome evidence; `outcome_score` / `outcome_verified` reflect outcome
+/// evidence only.
+pub async fn verify_workflow(
+    State(_state): State<AppState>,
+    Json(req): Json<VerifyRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let wf = parse_wf(req.workflow)?;
+    let plan = build_plan(&req.observe_node, req.plan)?;
+    let harness = VerificationHarness::new();
+    let report = verify(&harness, &wf, &plan)
+        .await
+        .map_err(|e| ApiError::Unprocessable(format!("verification failed: {e}")))?;
+    let mut value = serde_json::to_value(&report)
+        .map_err(|e| ApiError::Internal(format!("serialize report: {e}")))?;
+    if let Value::Object(map) = &mut value {
+        map.insert("summary".to_string(), Value::String(report.summary()));
+        map.insert("outcome_score".to_string(), json!(report.score()));
+        map.insert(
+            "outcome_verified".to_string(),
+            json!(report.meets(&Threshold::default())),
+        );
+    }
+    Ok(Json(value))
+}
+
+/// `POST /skills` — verify the workflow against the supplied holdout plan and
+/// persist it as a skill iff the report clears the threshold. Promotion is gated
+/// on the holdout (certification) evidence.
+pub async fn promote_skill(
+    State(state): State<AppState>,
+    Json(req): Json<PromoteRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let wf = parse_wf(req.workflow)?;
+    let plan = build_plan(&req.observe_node, req.holdout)?;
+    let harness = VerificationHarness::new();
+    let report = verify(&harness, &wf, &plan)
+        .await
+        .map_err(|e| ApiError::Unprocessable(format!("verification failed: {e}")))?;
+
+    let lib = PersistentSkillLibrary::with_default_threshold(&state.store);
+    let id = lib
+        .promote(&req.query, wf, &req.observe_node, &report)
+        .await
+        .map_err(|e| match e {
+            a2w_skills::PersistError::Store(se) => {
+                ApiError::Internal(format!("skill persistence failed: {se}"))
+            }
+            other => ApiError::Unprocessable(format!("not promoted: {other}")),
+        })?;
+    Ok(Json(json!({
+        "promoted": id,
+        "holdout_score": report.score(),
+        "summary": report.summary(),
+    })))
+}
+
+/// `GET /skills` — retrieve persisted skills, ranked by query similarity when a
+/// `query` is supplied (else listed by id).
+pub async fn find_skills(
+    State(state): State<AppState>,
+    Query(params): Query<FindParams>,
+) -> Result<Json<Value>, ApiError> {
+    let lib = PersistentSkillLibrary::with_default_threshold(&state.store);
+    let k = params.k.unwrap_or(20);
+    let query = params.query.unwrap_or_default();
+    let matches = lib
+        .retrieve(&query, k)
+        .await
+        .map_err(|e| ApiError::Internal(format!("skill retrieval failed: {e}")))?;
+    let skills: Vec<Value> = matches
+        .into_iter()
+        .map(|(skill, sim)| {
+            json!({
+                "id": skill.id,
+                "query": skill.query,
+                "observe_node": skill.observe_node,
+                "holdout_score": skill.evidence.score,
+                "similarity": sim,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "skills": skills })))
 }

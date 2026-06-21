@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use a2w_llm::MockLlm;
 use a2w_mcp::{
-    A2wServer, ApplyOpsInput, DeleteCredentialInput, GetTemplateInput, McpPolicy, OptimizeInput,
-    RunInput, RunTestsInput, SearchTemplatesInput, StoreCredentialInput, WorkflowInput,
+    A2wServer, ApplyOpsInput, DeleteCredentialInput, FindSkillInput, GetTemplateInput, McpPolicy,
+    OptimizeInput, PromoteSkillInput, RunInput, RunTestsInput, SearchTemplatesInput,
+    StoreCredentialInput, VerifyInput, WorkflowInput,
 };
 use a2w_store::{Store, Vault};
 use serde_json::{json, Value};
@@ -725,4 +726,133 @@ async fn generate_logic_with_mock_repairs_then_succeeds() {
         2,
         "one repair then success"
     );
+}
+
+// ---- F4: verify / promote / find skill over the served surface ------------
+
+/// A tagging workflow `{ trigger -> tag(set tagged=true) }`.
+fn tagging_wf(id: &str) -> Value {
+    json!({
+        "schema_version": 1, "id": id, "name": id,
+        "nodes": [
+            { "id": "trigger", "kind": "webhook_trigger", "params": {} },
+            { "id": "tag", "kind": "transform", "params": { "set": { "tagged": true } } }
+        ],
+        "connections": [ { "from_node": "trigger", "from_port": 0, "to_node": "tag" } ]
+    })
+}
+
+/// A holdout plan (spec + semantic) the tagging workflow satisfies.
+fn holdout_plan() -> Value {
+    json!({
+        "spec": {
+            "input": [ { "id": 0 }, { "id": 1 } ],
+            "assertions": [
+                { "kind": "every_item_field_equals", "path": "/tagged", "value": true }
+            ]
+        },
+        "semantic": [
+            { "AppendAddsOutputs": {
+                "base_input": [ { "id": 0 }, { "id": 1 } ],
+                "passing_extra": [ { "id": 9 } ],
+                "per_item": 1
+            } }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn wf_verify_reports_outcome_and_engine_separately() {
+    let server = server_allow_all();
+    let report = server
+        .verify_logic(VerifyInput {
+            workflow: tagging_wf("wf_v"),
+            observe_node: "tag".to_string(),
+            spec: Some(json!({
+                "input": [ { "id": 0 }, { "id": 1 } ],
+                "assertions": [
+                    { "kind": "every_item_field_equals", "path": "/tagged", "value": true }
+                ]
+            })),
+            golden: None,
+            semantic: Some(json!([
+                { "CountConservation": { "input": [ { "id": 0 }, { "id": 1 } ] } }
+            ])),
+            metamorphic: Some(json!({
+                "seed": [ { "id": 0 }, { "id": 1 } ],
+                "rerun_identity": true,
+                "permutation_invariance": true,
+                "duplication_factor": 2,
+                "additivity": true
+            })),
+        })
+        .await
+        .expect("verify");
+    // Outcome score is over outcome evidence only; engine invariants are listed
+    // but do not contribute to the outcome score.
+    let checks = report["checks"].as_array().unwrap();
+    assert!(checks.iter().any(|c| c["category"] == json!("semantic_relation")));
+    assert!(checks.iter().any(|c| c["category"] == json!("engine_invariant")));
+    // The summary states outcome status explicitly.
+    let summary = report.to_string();
+    assert!(summary.contains("OUTCOME"));
+}
+
+#[tokio::test]
+async fn wf_promote_then_find_skill_through_store() {
+    let server = server_with_vault().await; // has a Store
+
+    let promoted = server
+        .promote_skill_logic(PromoteSkillInput {
+            query: "tag incoming alerts".to_string(),
+            workflow: tagging_wf("wf_skill"),
+            observe_node: "tag".to_string(),
+            holdout: holdout_plan(),
+        })
+        .await
+        .expect("promote");
+    let id = promoted["promoted"].as_str().expect("id").to_string();
+    assert_eq!(promoted["holdout_score"], json!(1.0));
+
+    // Retrieve it for a similar query — from the persisted store.
+    let found = server
+        .find_skill_logic(FindSkillInput {
+            query: "tag the alerts".to_string(),
+            k: Some(5),
+        })
+        .await
+        .expect("find");
+    let skills = found["skills"].as_array().expect("skills array");
+    assert_eq!(skills.len(), 1);
+    assert_eq!(skills[0]["id"], json!(id));
+    assert!(skills[0]["similarity"].as_f64().unwrap() > 0.0);
+}
+
+#[tokio::test]
+async fn wf_promote_skill_rejects_evidence_free_holdout() {
+    let server = server_with_vault().await;
+    // An empty holdout (no outcome evidence) must not promote.
+    let err = server
+        .promote_skill_logic(PromoteSkillInput {
+            query: "tag".to_string(),
+            workflow: tagging_wf("wf_skill"),
+            observe_node: "tag".to_string(),
+            holdout: json!({}),
+        })
+        .await
+        .expect_err("evidence-free holdout must be refused");
+    assert!(err.message.contains("not promoted"), "msg: {}", err.message);
+}
+
+#[tokio::test]
+async fn skill_tools_without_store_return_invalid_params() {
+    let server = server_allow_all(); // no store
+    let err = server
+        .find_skill_logic(FindSkillInput {
+            query: "x".to_string(),
+            k: None,
+        })
+        .await
+        .expect_err("no store → error");
+    assert!(err.message.contains("persistence"), "msg: {}", err.message);
 }

@@ -20,6 +20,8 @@ a2w-templates = { workspace = true }
 a2w-llm = { workspace = true }
 a2w-author = { workspace = true }
 a2w-store = { workspace = true }
+a2w-verify = { workspace = true }
+a2w-skills = { workspace = true }
 rmcp = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std"] }
 serde = { workspace = true }

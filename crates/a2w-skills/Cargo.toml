@@ -9,6 +9,7 @@ description = "A2W skill library / workflow memory: promote verification-cleared
 a2w-ir = { workspace = true }
 a2w-validator = { workspace = true }
 a2w-verify = { workspace = true }
+a2w-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

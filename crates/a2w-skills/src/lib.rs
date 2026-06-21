@@ -15,13 +15,15 @@
 
 pub mod compose;
 pub mod library;
+pub mod persist;
 pub mod signature;
 
 use a2w_validator::ValidationReport;
 use thiserror::Error;
 
 pub use compose::{adapt, compose_sequential};
-pub use library::{EvidenceSnapshot, Skill, SkillLibrary};
+pub use library::{assemble_skill, vet_for_promotion, EvidenceSnapshot, Skill, SkillLibrary};
+pub use persist::{PersistError, PersistentSkillLibrary};
 pub use signature::TaskSignature;
 
 /// Errors from skill promotion and composition.

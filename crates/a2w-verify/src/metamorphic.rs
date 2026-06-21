@@ -9,6 +9,7 @@
 //! Each relation is independent of how the workflow was generated, so the same
 //! model error cannot hide in both the workflow and its test.
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::harness::VerificationHarness;
@@ -21,7 +22,8 @@ use crate::{multiset_eq, multiset_of, VerifyError};
 /// deterministic per-item pipeline, then add or remove relations to match the
 /// workflow's class (e.g. drop [`MetamorphicSuite::additivity`] for a workflow
 /// that genuinely aggregates across items in an order-sensitive way).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct MetamorphicSuite {
     /// Seed input used by single-input relations (rerun, permutation, scaling).
     pub seed: Vec<Value>,

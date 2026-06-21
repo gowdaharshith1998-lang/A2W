@@ -11,6 +11,8 @@ a2w-engine = { workspace = true }
 a2w-nodes = { workspace = true }
 a2w-validator = { workspace = true }
 a2w-store = { workspace = true }
+a2w-verify = { workspace = true }
+a2w-skills = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["signal"] }
 serde = { workspace = true }

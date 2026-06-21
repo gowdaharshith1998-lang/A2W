@@ -11,7 +11,7 @@
 //! Results are reported under [`CheckCategory::SemanticRelation`] — outcome
 //! evidence.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::harness::VerificationHarness;
@@ -22,7 +22,7 @@ use crate::VerifyError;
 const EPS: f64 = 1e-9;
 
 /// A single spec-derived semantic relation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SemanticRelation {
     /// **Multiplicative homomorphism.** Multiplying every input item's
     /// `in_field` (a JSON pointer) by `factor` must multiply the *summed*
@@ -242,7 +242,7 @@ impl SemanticRelation {
 }
 
 /// A bundle of semantic relations to evaluate together.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SemanticSuite {
     /// The relations to run.
     pub relations: Vec<SemanticRelation>,

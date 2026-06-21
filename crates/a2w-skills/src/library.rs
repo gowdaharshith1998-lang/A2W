@@ -117,50 +117,9 @@ impl SkillLibrary {
         observe_node: &str,
         report: &ConfidenceReport,
     ) -> Result<String, SkillError> {
-        // The report must actually describe this workflow.
-        if report.workflow_id != workflow.id {
-            return Err(SkillError::ReportMismatch {
-                report_for: report.workflow_id.clone(),
-                workflow: workflow.id.clone(),
-            });
-        }
-
-        // A promoted skill must be statically valid.
-        let validation = a2w_validator::validate(&workflow);
-        if !validation.is_valid {
-            return Err(SkillError::Invalid(validation));
-        }
-
-        // The gate: M3 OUTCOME evidence, not execution and not engine-invariants.
-        if !report.meets(&self.threshold) {
-            return Err(SkillError::BelowThreshold {
-                score: report.score(),
-                semantic_relations_passed: report
-                    .passed_in(a2w_verify::CheckCategory::SemanticRelation),
-                summary: report.summary(),
-            });
-        }
-
+        vet_for_promotion(&workflow, report, &self.threshold)?;
         let id = self.mint_id();
-        let signature = TaskSignature::from_query_and_workflow(query, &workflow);
-        let evidence = EvidenceSnapshot {
-            score: report.score(),
-            outcome_total: report.outcome_total(),
-            outcome_passed: report.outcome_passed(),
-            semantic_relations_passed: report
-                .passed_in(a2w_verify::CheckCategory::SemanticRelation),
-            engine_invariants_passed: report
-                .passed_in(a2w_verify::CheckCategory::EngineInvariant),
-            summary: report.summary(),
-        };
-        let skill = Skill {
-            id: id.clone(),
-            query: query.to_string(),
-            workflow,
-            observe_node: observe_node.to_string(),
-            signature,
-            evidence,
-        };
+        let skill = assemble_skill(id.clone(), query, workflow, observe_node, report);
         self.skills.insert(id.clone(), skill);
         Ok(id)
     }
@@ -211,5 +170,68 @@ impl SkillLibrary {
 impl Default for SkillLibrary {
     fn default() -> Self {
         Self::with_default_threshold()
+    }
+}
+
+/// The promotion gate, shared by the in-memory [`SkillLibrary`] and the
+/// persistent library. A workflow is promotable iff: the report describes it,
+/// it passes M1 validation, and the report clears the threshold on OUTCOME
+/// evidence (never engine-invariants, never "it ran").
+///
+/// # Errors
+/// [`SkillError::ReportMismatch`] / [`SkillError::Invalid`] /
+/// [`SkillError::BelowThreshold`].
+pub fn vet_for_promotion(
+    workflow: &Workflow,
+    report: &ConfidenceReport,
+    threshold: &a2w_verify::Threshold,
+) -> Result<(), SkillError> {
+    if report.workflow_id != workflow.id {
+        return Err(SkillError::ReportMismatch {
+            report_for: report.workflow_id.clone(),
+            workflow: workflow.id.clone(),
+        });
+    }
+    let validation = a2w_validator::validate(workflow);
+    if !validation.is_valid {
+        return Err(SkillError::Invalid(validation));
+    }
+    if !report.meets(threshold) {
+        return Err(SkillError::BelowThreshold {
+            score: report.score(),
+            semantic_relations_passed: report
+                .passed_in(a2w_verify::CheckCategory::SemanticRelation),
+            summary: report.summary(),
+        });
+    }
+    Ok(())
+}
+
+/// Build a [`Skill`] from a vetted workflow + report. Does NOT re-check the
+/// gate — call [`vet_for_promotion`] first.
+#[must_use]
+pub fn assemble_skill(
+    id: String,
+    query: &str,
+    workflow: Workflow,
+    observe_node: &str,
+    report: &ConfidenceReport,
+) -> Skill {
+    let signature = TaskSignature::from_query_and_workflow(query, &workflow);
+    let evidence = EvidenceSnapshot {
+        score: report.score(),
+        outcome_total: report.outcome_total(),
+        outcome_passed: report.outcome_passed(),
+        semantic_relations_passed: report.passed_in(a2w_verify::CheckCategory::SemanticRelation),
+        engine_invariants_passed: report.passed_in(a2w_verify::CheckCategory::EngineInvariant),
+        summary: report.summary(),
+    };
+    Skill {
+        id,
+        query: query.to_string(),
+        workflow,
+        observe_node: observe_node.to_string(),
+        signature,
+        evidence,
     }
 }

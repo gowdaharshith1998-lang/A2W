@@ -100,6 +100,28 @@ pub fn workflow_fingerprint(wf: &a2w_ir::Workflow) -> String {
     format!("{h:016x}")
 }
 
+/// A persisted skill row (F4). Dependency-light by design: the store holds the
+/// proven workflow IR and the skill's metadata as JSON columns so it need not
+/// depend on `a2w-skills`; `a2w-skills` owns the `Skill` <-> `SkillRecord`
+/// mapping.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillRecord {
+    /// Stable skill id.
+    pub id: String,
+    /// The natural-language query the skill solves.
+    pub query: String,
+    /// The node whose output is "the result".
+    pub observe_node: String,
+    /// The proven workflow IR, serialized.
+    pub workflow_json: String,
+    /// The task signature, serialized.
+    pub signature_json: String,
+    /// The calibrated evidence snapshot, serialized.
+    pub evidence_json: String,
+    /// The HOLDOUT-certified outcome score at promotion time.
+    pub holdout_score: f64,
+}
+
 /// The persistence handle: a pooled SQLite connection.
 pub struct Store {
     /// The connection pool. Visible within the crate so [`Vault`] can run its
@@ -484,6 +506,39 @@ impl Store {
             version = 5;
             self.set_schema_version(version).await?;
         }
+
+        // ---- v5 -> v6: skill library / workflow memory (F4) ------------------
+        // Persists M4 skills so the generate -> verify -> promote -> retrieve
+        // loop runs through the durable surface, not just in-memory. A skill
+        // row stores the proven workflow IR, its task signature, the calibrated
+        // evidence snapshot, and the HOLDOUT-certified score (the honest one).
+        // `CREATE TABLE IF NOT EXISTS` is self-healing if a prior attempt
+        // crashed mid-migration; the version bump only lands after the table
+        // exists.
+        if version < 6 {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS skills (\
+                    id TEXT PRIMARY KEY, \
+                    query TEXT NOT NULL, \
+                    observe_node TEXT NOT NULL, \
+                    workflow_json TEXT NOT NULL, \
+                    signature_json TEXT NOT NULL, \
+                    evidence_json TEXT NOT NULL, \
+                    holdout_score REAL NOT NULL, \
+                    created_at INTEGER NOT NULL\
+                )",
+            )
+            .execute(&self.pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_skills_holdout \
+                 ON skills(holdout_score)",
+            )
+            .execute(&self.pool)
+            .await?;
+            version = 6;
+            self.set_schema_version(version).await?;
+        }
         let _ = version;
 
         Ok(())
@@ -650,6 +705,100 @@ impl Store {
             .await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    // ----------------------------------------------------------------------
+    // Skill library (F4)
+    // ----------------------------------------------------------------------
+
+    /// Insert or update a skill row, keyed by its `id`.
+    ///
+    /// # Errors
+    /// [`StoreError::Sqlx`] on a write failure.
+    pub async fn save_skill(&self, rec: &SkillRecord) -> Result<(), StoreError> {
+        let created_at = now_unix_seconds();
+        sqlx::query(
+            "INSERT INTO skills \
+                (id, query, observe_node, workflow_json, signature_json, evidence_json, \
+                 holdout_score, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+             ON CONFLICT(id) DO UPDATE SET \
+               query = excluded.query, \
+               observe_node = excluded.observe_node, \
+               workflow_json = excluded.workflow_json, \
+               signature_json = excluded.signature_json, \
+               evidence_json = excluded.evidence_json, \
+               holdout_score = excluded.holdout_score",
+        )
+        .bind(&rec.id)
+        .bind(&rec.query)
+        .bind(&rec.observe_node)
+        .bind(&rec.workflow_json)
+        .bind(&rec.signature_json)
+        .bind(&rec.evidence_json)
+        .bind(rec.holdout_score)
+        .bind(created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Fetch a skill row by id. `Ok(None)` if absent.
+    ///
+    /// # Errors
+    /// [`StoreError::Sqlx`] on a read failure.
+    pub async fn get_skill(&self, id: &str) -> Result<Option<SkillRecord>, StoreError> {
+        let row: Option<(String, String, String, String, String, f64)> = sqlx::query_as(
+            "SELECT query, observe_node, workflow_json, signature_json, evidence_json, \
+                    holdout_score \
+             FROM skills WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(
+            |(query, observe_node, workflow_json, signature_json, evidence_json, holdout_score)| {
+                SkillRecord {
+                    id: id.to_string(),
+                    query,
+                    observe_node,
+                    workflow_json,
+                    signature_json,
+                    evidence_json,
+                    holdout_score,
+                }
+            },
+        ))
+    }
+
+    /// List all skill rows, ordered by id (deterministic).
+    ///
+    /// # Errors
+    /// [`StoreError::Sqlx`] on a read failure.
+    pub async fn list_skills(&self) -> Result<Vec<SkillRecord>, StoreError> {
+        let rows: Vec<(String, String, String, String, String, String, f64)> = sqlx::query_as(
+            "SELECT id, query, observe_node, workflow_json, signature_json, evidence_json, \
+                    holdout_score \
+             FROM skills ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, query, observe_node, workflow_json, signature_json, evidence_json, holdout_score)| {
+                    SkillRecord {
+                        id,
+                        query,
+                        observe_node,
+                        workflow_json,
+                        signature_json,
+                        evidence_json,
+                        holdout_score,
+                    }
+                },
+            )
+            .collect())
     }
 
     // ----------------------------------------------------------------------
@@ -2146,6 +2295,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn skills_round_trip_through_v6_table() {
+        let store = Store::connect("sqlite::memory:").await.expect("connect");
+        let rec = SkillRecord {
+            id: "skill_abc".to_string(),
+            query: "tag alerts".to_string(),
+            observe_node: "tag".to_string(),
+            workflow_json: "{\"id\":\"wf\"}".to_string(),
+            signature_json: "{\"tokens\":[]}".to_string(),
+            evidence_json: "{\"score\":1.0}".to_string(),
+            holdout_score: 1.0,
+        };
+        store.save_skill(&rec).await.expect("save skill");
+
+        let got = store.get_skill("skill_abc").await.expect("get").expect("present");
+        assert_eq!(got, rec);
+
+        // Upsert: re-save with a new score updates in place (no duplicate row).
+        let mut rec2 = rec.clone();
+        rec2.holdout_score = 0.5;
+        rec2.query = "tag the alerts".to_string();
+        store.save_skill(&rec2).await.expect("upsert");
+
+        let all = store.list_skills().await.expect("list");
+        assert_eq!(all.len(), 1, "upsert must not duplicate");
+        assert_eq!(all[0].holdout_score, 0.5);
+        assert_eq!(all[0].query, "tag the alerts");
+
+        assert!(store.get_skill("missing").await.expect("get missing").is_none());
+    }
+
+    #[tokio::test]
     async fn schema_re_init_is_idempotent() {
         // Two connections sharing a file: the second should not fail by
         // re-running migrations.
@@ -2160,8 +2340,8 @@ mod tests {
         let _first = Store::connect(&path).await.expect("first connect");
         let second = Store::connect(&path).await.expect("second connect");
         let v = second.current_schema_version().await.expect("read version");
-        // Bumped to v5 with the workflow_references inverse-index (R5 H5).
-        assert_eq!(v, 5);
+        // Bumped to v6 with the skills table (F4).
+        assert_eq!(v, 6);
 
         let _ = std::fs::remove_file(
             path.trim_start_matches("sqlite://")

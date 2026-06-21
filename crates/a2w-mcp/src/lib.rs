@@ -61,8 +61,13 @@ use a2w_engine::{Engine, ExecutionMode, MemoryEventLog, RunResult};
 use a2w_ir::{NodeKind, Workflow};
 use a2w_llm::{AnthropicClient, LlmClient};
 use a2w_optimizer::{analyze, apply, profile, IrOp};
+use a2w_skills::PersistentSkillLibrary;
 use a2w_store::{Store, StoreCredentialResolver, Vault};
 use a2w_testkit::{run_tests, TestCase};
+use a2w_verify::{
+    verify, GoldenFixture, MetamorphicSuite, SemanticRelation, SemanticSuite, VerificationHarness,
+    VerificationPlan, WorkflowSpec,
+};
 
 // ---------------------------------------------------------------------------
 // Tool input parameter types.
@@ -170,6 +175,56 @@ pub struct StoreCredentialInput {
 pub struct DeleteCredentialInput {
     /// The credential id to delete (no-op when absent).
     pub id: String,
+}
+
+/// A verification plan, as untyped JSON parts (parsed into the typed
+/// `a2w_verify` plan inside the logic). Engine-invariant relations
+/// (`metamorphic`) verify the engine; everything else is OUTCOME evidence.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct VerifyInput {
+    /// The workflow IR document.
+    pub workflow: Value,
+    /// The node whose output is treated as "the result".
+    pub observe_node: String,
+    /// Optional spec assertions `{ input, assertions }` (outcome evidence).
+    #[serde(default)]
+    pub spec: Option<Value>,
+    /// Optional golden fixtures `[{ name, input, expected, match_mode }]`
+    /// (outcome evidence).
+    #[serde(default)]
+    pub golden: Option<Value>,
+    /// Optional spec-derived semantic relations (outcome evidence).
+    #[serde(default)]
+    pub semantic: Option<Value>,
+    /// Optional engine-invariant metamorphic suite (NOT outcome evidence).
+    #[serde(default)]
+    pub metamorphic: Option<Value>,
+}
+
+/// Input for `wf_promote_skill`: verify on the supplied HOLDOUT plan, then
+/// persist iff it clears the threshold.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PromoteSkillInput {
+    /// The natural-language query this workflow solves.
+    pub query: String,
+    /// The workflow IR document.
+    pub workflow: Value,
+    /// The node whose output is "the result".
+    pub observe_node: String,
+    /// The holdout verification plan (same shape as `wf_verify`, minus
+    /// `workflow`/`observe_node`): `{ spec?, golden?, semantic?, metamorphic? }`.
+    /// Promotion is gated on the report this plan produces.
+    pub holdout: Value,
+}
+
+/// Input for `wf_find_skill`: retrieve persisted skills by query signature.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FindSkillInput {
+    /// Free-text query; ranked by task-signature similarity.
+    pub query: String,
+    /// Max number of skills to return (defaults to 5).
+    #[serde(default)]
+    pub k: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -731,6 +786,138 @@ impl A2wServer {
             .map_err(|e| ErrorData::internal_error(format!("LLM transport failed: {e}"), None))?;
         serde_json::to_value(outcome).map_err(internal)
     }
+
+    // -- F4: verification + skill library over the served surface ----------
+
+    /// `wf_verify` logic: run a verification plan (zero-token, DryRun) and
+    /// return the calibrated [`ConfidenceReport`](a2w_verify::ConfidenceReport).
+    /// Engine-invariants are reported separately from outcome evidence.
+    ///
+    /// # Errors
+    /// [`ErrorData::invalid_params`] on bad workflow/plan JSON or an absent
+    /// observe node.
+    pub async fn verify_logic(&self, input: VerifyInput) -> Result<Value, ErrorData> {
+        let wf = parse_workflow(input.workflow)?;
+        let plan = build_plan(
+            &input.observe_node,
+            input.spec,
+            input.golden,
+            input.semantic,
+            input.metamorphic,
+        )?;
+        let harness = VerificationHarness::new();
+        let report = verify(&harness, &wf, &plan)
+            .await
+            .map_err(verify_error)?;
+        // Surface the calibrated headline alongside the structured report so the
+        // agent can never mistake engine-verification for outcome-verification.
+        let mut value = serde_json::to_value(&report).map_err(internal)?;
+        if let Value::Object(map) = &mut value {
+            map.insert("summary".to_string(), Value::String(report.summary()));
+            map.insert(
+                "outcome_score".to_string(),
+                json!(report.score()),
+            );
+            map.insert(
+                "outcome_verified".to_string(),
+                json!(report.meets(&a2w_verify::Threshold::default())),
+            );
+        }
+        Ok(value)
+    }
+
+    /// `wf_promote_skill` logic: verify the workflow against the supplied
+    /// **holdout** plan and persist it as a skill iff the report clears the
+    /// threshold. Promotion is gated on the holdout (certification) evidence,
+    /// never on "it ran". Requires a configured store.
+    ///
+    /// # Errors
+    /// [`ErrorData::invalid_params`] on bad input, an absent store, or when the
+    /// report does not clear the threshold.
+    pub async fn promote_skill_logic(&self, input: PromoteSkillInput) -> Result<Value, ErrorData> {
+        let store = self.require_store()?;
+        let wf = parse_workflow(input.workflow)?;
+        // The holdout plan is the verify-shape minus workflow/observe_node.
+        let holdout_parts: PlanParts = serde_json::from_value(input.holdout).map_err(|e| {
+            ErrorData::invalid_params(format!("`holdout` is not a valid plan: {e}"), None)
+        })?;
+        let plan = build_plan(
+            &input.observe_node,
+            holdout_parts.spec,
+            holdout_parts.golden,
+            holdout_parts.semantic,
+            holdout_parts.metamorphic,
+        )?;
+        let harness = VerificationHarness::new();
+        let report = verify(&harness, &wf, &plan)
+            .await
+            .map_err(verify_error)?;
+
+        let lib = PersistentSkillLibrary::with_default_threshold(store);
+        let id = lib
+            .promote(&input.query, wf, &input.observe_node, &report)
+            .await
+            .map_err(skill_error)?;
+        Ok(json!({
+            "promoted": id,
+            "holdout_score": report.score(),
+            "summary": report.summary(),
+        }))
+    }
+
+    /// `wf_find_skill` logic: retrieve persisted skills by query signature.
+    /// Requires a configured store.
+    ///
+    /// # Errors
+    /// [`ErrorData::invalid_params`] when no store is configured;
+    /// [`ErrorData::internal_error`] on a storage failure.
+    pub async fn find_skill_logic(&self, input: FindSkillInput) -> Result<Value, ErrorData> {
+        let store = self.require_store()?;
+        let lib = PersistentSkillLibrary::with_default_threshold(store);
+        let k = input.k.unwrap_or(5);
+        let matches = lib
+            .retrieve(&input.query, k)
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("skill retrieval failed: {e}"), None))?;
+        let out: Vec<Value> = matches
+            .into_iter()
+            .map(|(skill, sim)| {
+                json!({
+                    "id": skill.id,
+                    "query": skill.query,
+                    "observe_node": skill.observe_node,
+                    "holdout_score": skill.evidence.score,
+                    "similarity": sim,
+                    "workflow": skill.workflow,
+                })
+            })
+            .collect();
+        Ok(json!({ "skills": out }))
+    }
+
+    /// Borrow the store, or return an `invalid_params` error naming the fix.
+    fn require_store(&self) -> Result<&Arc<Store>, ErrorData> {
+        self.store.as_ref().ok_or_else(|| {
+            ErrorData::invalid_params(
+                "skill tools disabled: server was started without persistence \
+                 (set A2W_MASTER_KEY / A2W_DB_URL and restart so a Store is configured)",
+                None,
+            )
+        })
+    }
+}
+
+/// The plan parts shared by `wf_verify` and the `holdout` of `wf_promote_skill`.
+#[derive(Debug, Deserialize)]
+struct PlanParts {
+    #[serde(default)]
+    spec: Option<Value>,
+    #[serde(default)]
+    golden: Option<Value>,
+    #[serde(default)]
+    semantic: Option<Value>,
+    #[serde(default)]
+    metamorphic: Option<Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -932,6 +1119,59 @@ impl A2wServer {
         ok(self.delete_credential_logic(input).await?)
     }
 
+    /// Verify a workflow: run a verification plan and return a calibrated
+    /// confidence report (engine-invariants reported separately from outcome).
+    #[tool(
+        name = "wf_verify",
+        description = "Verify a workflow and return a calibrated ConfidenceReport. \
+                       Input { workflow, observe_node, spec?, golden?, semantic?, \
+                       metamorphic? }. Runs zero-token (DryRun). The report \
+                       separates ENGINE-INVARIANTS (rerun/permutation/scaling/ \
+                       additivity — they verify the engine, NOT the outcome) from \
+                       OUTCOME evidence (spec assertions, golden fixtures, \
+                       spec-derived semantic relations). score()/meets() use \
+                       outcome evidence only."
+    )]
+    pub async fn wf_verify(
+        &self,
+        Parameters(input): Parameters<VerifyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok(self.verify_logic(input).await?)
+    }
+
+    /// Promote a verified workflow into the durable skill library.
+    #[tool(
+        name = "wf_promote_skill",
+        description = "Verify a workflow against the supplied HOLDOUT plan and \
+                       persist it as a reusable skill IFF the report clears the \
+                       threshold. Input { query, workflow, observe_node, holdout: \
+                       { spec?, golden?, semantic?, metamorphic? } }. Promotion is \
+                       gated on the holdout (certification) evidence, never on 'it \
+                       ran'. Requires the server to have a Store. Returns \
+                       { promoted: id, holdout_score, summary }."
+    )]
+    pub async fn wf_promote_skill(
+        &self,
+        Parameters(input): Parameters<PromoteSkillInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok(self.promote_skill_logic(input).await?)
+    }
+
+    /// Retrieve persisted skills by query signature.
+    #[tool(
+        name = "wf_find_skill",
+        description = "Retrieve persisted skills most similar to a query. Input \
+                       { query, k? }. Returns { skills: [{ id, query, \
+                       observe_node, holdout_score, similarity, workflow }] }, \
+                       ranked by task-signature similarity. Requires a Store."
+    )]
+    pub async fn wf_find_skill(
+        &self,
+        Parameters(input): Parameters<FindSkillInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        ok(self.find_skill_logic(input).await?)
+    }
+
     /// Author a workflow from a plain-English prompt (Generate→Validate→Repair).
     #[tool(
         name = "generate_workflow_from_prompt",
@@ -1048,4 +1288,62 @@ fn engine_error(err: a2w_engine::EngineError) -> ErrorData {
 /// internal tool error.
 fn internal(err: serde_json::Error) -> ErrorData {
     ErrorData::internal_error(format!("failed to serialize tool output: {err}"), None)
+}
+
+/// Build a typed [`VerificationPlan`] from untyped JSON plan parts, mapping any
+/// parse failure to a clean `invalid_params` tool error.
+fn build_plan(
+    observe_node: &str,
+    spec: Option<Value>,
+    golden: Option<Value>,
+    semantic: Option<Value>,
+    metamorphic: Option<Value>,
+) -> Result<VerificationPlan, ErrorData> {
+    let mut plan = VerificationPlan::new(observe_node);
+    if let Some(spec) = spec {
+        let spec: WorkflowSpec = serde_json::from_value(spec)
+            .map_err(|e| ErrorData::invalid_params(format!("`spec` is invalid: {e}"), None))?;
+        plan = plan.with_spec(spec);
+    }
+    if let Some(golden) = golden {
+        let golden: Vec<GoldenFixture> = serde_json::from_value(golden)
+            .map_err(|e| ErrorData::invalid_params(format!("`golden` is invalid: {e}"), None))?;
+        plan = plan.with_golden(golden);
+    }
+    if let Some(semantic) = semantic {
+        let relations: Vec<SemanticRelation> = serde_json::from_value(semantic)
+            .map_err(|e| ErrorData::invalid_params(format!("`semantic` is invalid: {e}"), None))?;
+        plan = plan.with_semantic(SemanticSuite::new(relations));
+    }
+    if let Some(metamorphic) = metamorphic {
+        let suite: MetamorphicSuite = serde_json::from_value(metamorphic).map_err(|e| {
+            ErrorData::invalid_params(format!("`metamorphic` is invalid: {e}"), None)
+        })?;
+        plan = plan.with_metamorphic(suite);
+    }
+    Ok(plan)
+}
+
+/// Map a verification error to an `invalid_params` tool error (an absent observe
+/// node or an unrunnable workflow is something the agent can fix).
+fn verify_error(err: a2w_verify::VerifyError) -> ErrorData {
+    ErrorData::invalid_params(format!("verification failed: {err}"), None)
+}
+
+/// Map a skill-promotion error to a tool error, attaching the calibrated
+/// summary as `data` when the report fell short of the threshold.
+fn skill_error(err: a2w_skills::PersistError) -> ErrorData {
+    match &err {
+        a2w_skills::PersistError::Skill(a2w_skills::SkillError::BelowThreshold {
+            summary,
+            ..
+        }) => ErrorData::invalid_params(
+            format!("not promoted: {err}"),
+            Some(json!({ "summary": summary })),
+        ),
+        a2w_skills::PersistError::Store(_) => {
+            ErrorData::internal_error(format!("skill persistence failed: {err}"), None)
+        }
+        _ => ErrorData::invalid_params(format!("not promoted: {err}"), None),
+    }
 }
