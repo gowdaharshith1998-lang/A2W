@@ -98,4 +98,3 @@ Known limitations:
 - `Transform.set` is static; a real expression engine is a future
   milestone.
 
-License: Apache-2.0.
