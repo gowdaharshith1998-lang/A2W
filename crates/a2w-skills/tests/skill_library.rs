@@ -50,7 +50,9 @@ fn filter_workflow(id: &str) -> Workflow {
 }
 
 fn seed(n: usize) -> Vec<Value> {
-    (0..n).map(|i| json!({ "id": i, "keep": i % 2 == 0 })).collect()
+    (0..n)
+        .map(|i| json!({ "id": i, "keep": i % 2 == 0 }))
+        .collect()
 }
 
 /// Build a confidence report with real OUTCOME evidence (a spec assertion +
@@ -67,11 +69,13 @@ async fn confidence_for(wf: &Workflow, observe: &str) -> a2w_verify::ConfidenceR
                 path: "/id".to_string(),
             }],
         })
-        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
-            base_input: seed(4),
-            passing_extra: vec![json!({ "id": 1000, "keep": true })],
-            per_item: 1,
-        }]))
+        .with_semantic(SemanticSuite::new(vec![
+            SemanticRelation::AppendAddsOutputs {
+                base_input: seed(4),
+                passing_extra: vec![json!({ "id": 1000, "keep": true })],
+                per_item: 1,
+            },
+        ]))
         .with_metamorphic(MetamorphicSuite::standard(seed(6)));
     verify(&harness, wf, &plan).await.expect("verify")
 }
@@ -195,7 +199,11 @@ async fn compose_two_skills_sequentially() {
     assert_eq!(observe, "b_tag");
 
     // Exactly one trigger survives (A's).
-    let triggers = composed.nodes.iter().filter(|n| n.kind.is_trigger()).count();
+    let triggers = composed
+        .nodes
+        .iter()
+        .filter(|n| n.kind.is_trigger())
+        .count();
     assert_eq!(triggers, 1);
 
     // The composed workflow runs and is itself verifiable: feed items, observe

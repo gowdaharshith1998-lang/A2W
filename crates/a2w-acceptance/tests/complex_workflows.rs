@@ -82,7 +82,9 @@ struct AlwaysFailHttp;
 
 #[async_trait::async_trait]
 impl a2w_engine::NodeExecutor for AlwaysFailHttp {
-    fn has_side_effects(&self) -> bool { true }
+    fn has_side_effects(&self) -> bool {
+        true
+    }
     async fn execute(
         &self,
         _ctx: &a2w_engine::NodeContext,

@@ -35,9 +35,9 @@ agent / user ── HTTP ─── a2w-server ─┘                       │
 | `a2w-templates`  | Golden template corpus (`wf_search_templates`) |
 | `a2w-import`     | n8n → A2W IR importer |
 | `a2w-openapi`    | OpenAPI → A2W IR adapter |
-| `a2w-verify`     | Verification spine: spec assertions, golden fixtures, metamorphic relations, differential cross-checks → a calibrated confidence report |
-| `a2w-skills`     | Skill library / workflow memory: promote (gated on the confidence report), index by task signature, retrieve & compose |
-| `a2w-search`     | Deterministic beam search over validity-preserving IR mutations; fitness = confidence score |
+| `a2w-verify`     | Verification spine. Calibrated confidence report that **separates engine-invariants** (rerun/permutation/scaling/additivity — verify the engine, NOT the outcome) from **outcome evidence** (spec assertions, golden fixtures, differential cross-checks, spec-derived semantic relations) |
+| `a2w-skills`     | Skill library / workflow memory: promote (gated on **outcome** evidence), index by task signature, retrieve & compose. In-memory or persisted to `a2w-store` (`PersistentSkillLibrary`) |
+| `a2w-search`     | Deterministic, RNG-free beam search over validity-preserving IR mutations. Selects by a **fitness** plan, certifies the winner on a **disjoint holdout** plan, and reports the holdout-certified score + `overfit_gap` |
 | `a2w-bench`      | Criterion benchmarks |
 | `a2w-acceptance` | End-to-end acceptance tests |
 
@@ -88,20 +88,37 @@ REST endpoints table, Docker image, observability, and threat model.
 
 ## Status
 
-20 crates · 329 tests · clippy-clean · cargo-deny-clean · multi-stage Docker
+20 crates · 346 tests · clippy-clean · cargo-deny-clean · multi-stage Docker
 image · CI (fmt + clippy + test + cargo-audit + cargo-deny + docker smoke).
-All 14 node kinds have tested executors. A correctness/self-improvement build
-added static IR validity (reject-before-execute), a verification spine
-(metamorphic relations + golden fixtures + cross-checks → calibrated confidence
-report), a skill library, and validity-preserving IR search. Test counts above
+All 14 node kinds have tested executors. Schema v6.
+
+**What "verification" means here — read this before trusting a score.**
+A2W's engine is deterministic and per-item-independent *by construction*, so a
+class of checks (re-run identity, permutation invariance, duplication scaling,
+additivity) holds for **any** valid workflow. Those are **engine-invariants**:
+they verify the *engine*, not the *outcome*. They are reported separately and
+are **never** counted toward an outcome-correctness claim. **Outcome
+verification** rests on spec assertions, golden fixtures, differential
+cross-checks, and **spec-derived semantic relations** (which encode the
+workflow's intent and catch logic faults engine-invariants cannot). A
+confidence report holding only engine-invariants is labeled *"engine-verified;
+outcome UNVERIFIED."*
+
+The IR **search** optimizes a fitness plan, so the fitness score is not
+independent evidence about the winner. The winner is re-scored on a **disjoint
+holdout** plan (a checked-disjoint contract), and the **holdout** score is what
+is reported and what gates skill promotion; any `overfit_gap` is surfaced, not
+hidden. The full loop (verify → promote → retrieve) runs through the persisted
+store and the MCP tools / REST endpoints, not just in memory. Test counts above
 are **local** (CI runs the same `--workspace` gate).
 
 Known limitations:
-- The verification spine's metamorphic relations primarily assert the engine's
-  determinism/independence/scaling guarantees; workflow-*logic* faults are
-  caught by spec assertions, golden fixtures, and differential cross-checks.
-- `a2w-skills` / `a2w-search` are in-memory libraries, not yet persisted to
-  `a2w-store` or exposed as MCP tools / REST endpoints.
+- Engine-invariant relations assert engine guarantees only; outcome correctness
+  depends on the quality of the spec/golden/semantic evidence an author supplies
+  (garbage-in still applies — the system reports *what* it checked, calibrated).
+- Skill retrieval ranks by loading all rows in memory (fine at current scale).
+- `compose_sequential` connects every left-terminal to every right-entry node
+  (clean for single-terminal/single-entry graphs).
 - Query-adaptive sampling (M6) is not implemented — gated behind the
   multi-tenant auth wall.
 - Postgres support requires SQL portability work (`INSERT OR IGNORE` is

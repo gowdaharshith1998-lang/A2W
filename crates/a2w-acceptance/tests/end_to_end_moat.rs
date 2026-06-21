@@ -67,7 +67,11 @@ async fn whole_program_validate_run_verify_promote_search() {
     // -- M1: static validity ------------------------------------------------
     let router = alert_router();
     let report = a2w_validator::validate(&router);
-    assert!(report.is_valid, "router should be valid: {:?}", report.findings);
+    assert!(
+        report.is_valid,
+        "router should be valid: {:?}",
+        report.findings
+    );
 
     // -- engine: deterministic, zero-token run ------------------------------
     let harness = VerificationHarness::new(); // DryRun, no network, no LLM
@@ -100,11 +104,13 @@ async fn whole_program_validate_run_verify_promote_search() {
         })
         // Outcome evidence: appending one more high-priority alert escalates
         // exactly one more item (the router's intent, authored independently).
-        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
-            base_input: alerts(9),
-            passing_extra: vec![json!({ "id": 1000, "priority": "high" })],
-            per_item: 1,
-        }]))
+        .with_semantic(SemanticSuite::new(vec![
+            SemanticRelation::AppendAddsOutputs {
+                base_input: alerts(9),
+                passing_extra: vec![json!({ "id": 1000, "priority": "high" })],
+                per_item: 1,
+            },
+        ]))
         .with_metamorphic(MetamorphicSuite::standard(alerts(9)));
     let confidence = verify(&harness, &router, &plan).await.expect("verify");
     assert_eq!(
@@ -160,11 +166,13 @@ async fn whole_program_validate_run_verify_promote_search() {
                 value: json!(true),
             }],
         })
-        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
-            base_input: alerts(9),
-            passing_extra: vec![json!({ "id": 9001, "priority": "high" })],
-            per_item: 1,
-        }]));
+        .with_semantic(SemanticSuite::new(vec![
+            SemanticRelation::AppendAddsOutputs {
+                base_input: alerts(9),
+                passing_extra: vec![json!({ "id": 9001, "priority": "high" })],
+                per_item: 1,
+            },
+        ]));
     let holdout_input = vec![
         json!({ "id": 200, "priority": "high" }),
         json!({ "id": 201, "priority": "low" }),
@@ -179,14 +187,22 @@ async fn whole_program_validate_run_verify_promote_search() {
         }])
         // The holdout carries its OWN semantic relation (different input than
         // the fitness plan's) so it both certifies and clears the threshold.
-        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
-            base_input: holdout_input,
-            passing_extra: vec![json!({ "id": 202, "priority": "high" })],
-            per_item: 1,
-        }]));
+        .with_semantic(SemanticSuite::new(vec![
+            SemanticRelation::AppendAddsOutputs {
+                base_input: holdout_input,
+                passing_extra: vec![json!({ "id": 202, "priority": "high" })],
+                per_item: 1,
+            },
+        ]));
 
-    let seed_holdout = verify(&harness, &broken, &holdout_plan).await.unwrap().score();
-    assert!(seed_holdout < 1.0, "broken seed must be imperfect on the holdout");
+    let seed_holdout = verify(&harness, &broken, &holdout_plan)
+        .await
+        .unwrap()
+        .score();
+    assert!(
+        seed_holdout < 1.0,
+        "broken seed must be imperfect on the holdout"
+    );
 
     let ops: Vec<Box<dyn Mutation>> = vec![
         Box::new(SetTransformField {
@@ -216,7 +232,11 @@ async fn whole_program_validate_run_verify_promote_search() {
         outcome.initial_holdout_score,
         outcome.best_holdout_score
     );
-    assert!(!outcome.overfit(), "legit improvement: no overfit gap ({})", outcome.overfit_gap);
+    assert!(
+        !outcome.overfit(),
+        "legit improvement: no overfit gap ({})",
+        outcome.overfit_gap
+    );
 
     // The repaired workflow is valid and itself promotable — gated on the
     // HOLDOUT report (never the fitness report).
@@ -230,5 +250,9 @@ async fn whole_program_validate_run_verify_promote_search() {
         &certified,
     )
     .expect("evolved workflow promotes on its holdout report");
-    assert_eq!(lib.len(), 2, "both the original and evolved skills are stored");
+    assert_eq!(
+        lib.len(),
+        2,
+        "both the original and evolved skills are stored"
+    );
 }

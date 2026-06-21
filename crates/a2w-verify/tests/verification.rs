@@ -56,7 +56,9 @@ fn filter_workflow() -> Workflow {
 }
 
 fn seed_n(n: usize) -> Vec<Value> {
-    (0..n).map(|i| json!({ "id": i, "keep": i % 2 == 0 })).collect()
+    (0..n)
+        .map(|i| json!({ "id": i, "keep": i % 2 == 0 }))
+        .collect()
 }
 
 #[tokio::test]
@@ -86,9 +88,9 @@ async fn clean_per_item_map_clears_threshold() {
         }])
         // Outcome evidence: a semantic relation encoding "tagging is a pure
         // map" (count conserved).
-        .with_semantic(SemanticSuite::new(vec![SemanticRelation::CountConservation {
-            input: seed_n(5),
-        }]))
+        .with_semantic(SemanticSuite::new(vec![
+            SemanticRelation::CountConservation { input: seed_n(5) },
+        ]))
         // Engine-invariants: NOT outcome evidence; they assert engine guarantees.
         .with_metamorphic(MetamorphicSuite::standard(seed_n(6)));
 
@@ -167,7 +169,10 @@ async fn injected_fault_is_caught_by_a_relation() {
     });
     let report = verify(&harness, &faulty, &plan).await.expect("verify");
     assert!(
-        report.failures().iter().any(|f| f.category == CheckCategory::Spec),
+        report
+            .failures()
+            .iter()
+            .any(|f| f.category == CheckCategory::Spec),
         "the injected filter fault must be caught:\n{}",
         report.summary()
     );
@@ -256,8 +261,14 @@ async fn metamorphic_alone_catches_a_dropping_fault() {
         json!({ "items": [ {"v": 3}, {"v": 4} ] }),
     ];
 
-    let kept_one = harness.observe(&index_dependent, "keep", one_array).await.unwrap();
-    let kept_two = harness.observe(&index_dependent, "keep", two_arrays).await.unwrap();
+    let kept_one = harness
+        .observe(&index_dependent, "keep", one_array)
+        .await
+        .unwrap();
+    let kept_two = harness
+        .observe(&index_dependent, "keep", two_arrays)
+        .await
+        .unwrap();
     // One array → exactly one index-0 element kept. Two arrays → two index-0
     // elements kept. So the count differs: this workflow is sensitive to input
     // grouping, which additivity-style reasoning exposes.
@@ -288,16 +299,9 @@ async fn cross_check_against_oracle() {
             .collect()
     };
 
-    let result = cross_check_oracle(
-        &harness,
-        &workflow,
-        "tag",
-        "tagging",
-        seed_n(5),
-        &oracle,
-    )
-    .await
-    .expect("cross check");
+    let result = cross_check_oracle(&harness, &workflow, "tag", "tagging", seed_n(5), &oracle)
+        .await
+        .expect("cross check");
     assert!(result.passed, "{}", result.detail);
     assert_eq!(result.category, CheckCategory::CrossCheck);
 }
@@ -369,13 +373,10 @@ async fn rerun_identity_catches_nondeterminism() {
     }
 
     // Wire the non-deterministic executor in for the Transform kind.
-    let registry = a2w_nodes::default_registry().with(
-        NodeKind::Transform,
-        Arc::new(NonDeterministic::default()),
-    );
+    let registry = a2w_nodes::default_registry()
+        .with(NodeKind::Transform, Arc::new(NonDeterministic::default()));
     let engine = a2w_engine::Engine::new(registry);
-    let harness =
-        VerificationHarness::new().with_engine(engine, a2w_engine::ExecutionMode::DryRun);
+    let harness = VerificationHarness::new().with_engine(engine, a2w_engine::ExecutionMode::DryRun);
 
     let workflow = tagging_workflow(); // tag is a Transform → now non-deterministic
     let suite = MetamorphicSuite::standard(seed_n(3));
@@ -383,10 +384,7 @@ async fn rerun_identity_catches_nondeterminism() {
     let report = verify(&harness, &workflow, &plan).await.expect("verify");
 
     assert!(
-        report
-            .failures()
-            .iter()
-            .any(|f| f.name == "rerun_identity"),
+        report.failures().iter().any(|f| f.name == "rerun_identity"),
         "rerun_identity must catch the injected non-determinism:\n{}",
         report.summary()
     );
@@ -463,18 +461,25 @@ async fn semantic_relation_catches_wrong_field_engine_invariants_cannot() {
         "the wrong-field bug must be caught by a semantic relation:\n{}",
         bad.summary()
     );
-    assert!(bad.score() < 1.0, "outcome score must reflect the fault:\n{}", bad.summary());
+    assert!(
+        bad.score() < 1.0,
+        "outcome score must reflect the fault:\n{}",
+        bad.summary()
+    );
     assert!(!bad.meets(&Threshold::default()));
 
     // And an engine-invariant-ONLY report never clears an outcome threshold.
-    let engine_only = VerificationPlan::new("total")
-        .with_metamorphic(MetamorphicSuite::standard(base_input));
-    let eo = verify(&harness, &buggy, &engine_only).await.expect("verify");
+    let engine_only =
+        VerificationPlan::new("total").with_metamorphic(MetamorphicSuite::standard(base_input));
+    let eo = verify(&harness, &buggy, &engine_only)
+        .await
+        .expect("verify");
     assert!(eo.engine_invariants_held());
     assert_eq!(eo.score(), 0.0, "no outcome evidence ⇒ outcome score 0");
     assert!(!eo.meets(&Threshold::default()));
     assert!(
-        eo.summary().contains("OUTCOME: UNVERIFIED — engine-verified only"),
+        eo.summary()
+            .contains("OUTCOME: UNVERIFIED — engine-verified only"),
         "summary must not let engine-verification read as outcome-verification:\n{}",
         eo.summary()
     );

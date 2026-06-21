@@ -157,9 +157,11 @@ fn to_record(skill: &Skill) -> Result<SkillRecord, PersistError> {
         id: skill.id.clone(),
         query: skill.query.clone(),
         observe_node: skill.observe_node.clone(),
-        workflow_json: serde_json::to_string(&skill.workflow).map_err(|e| PersistError::Corrupt {
-            id: skill.id.clone(),
-            detail: format!("workflow serialize: {e}"),
+        workflow_json: serde_json::to_string(&skill.workflow).map_err(|e| {
+            PersistError::Corrupt {
+                id: skill.id.clone(),
+                detail: format!("workflow serialize: {e}"),
+            }
         })?,
         signature_json: serde_json::to_string(&skill.signature).map_err(|e| {
             PersistError::Corrupt {
@@ -167,9 +169,11 @@ fn to_record(skill: &Skill) -> Result<SkillRecord, PersistError> {
                 detail: format!("signature serialize: {e}"),
             }
         })?,
-        evidence_json: serde_json::to_string(&skill.evidence).map_err(|e| PersistError::Corrupt {
-            id: skill.id.clone(),
-            detail: format!("evidence serialize: {e}"),
+        evidence_json: serde_json::to_string(&skill.evidence).map_err(|e| {
+            PersistError::Corrupt {
+                id: skill.id.clone(),
+                detail: format!("evidence serialize: {e}"),
+            }
         })?,
         holdout_score: skill.evidence.score,
     })

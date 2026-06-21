@@ -75,7 +75,8 @@ impl Mutation for InsertPassthrough {
             passthrough.params = Value::Object(Map::new());
             candidate.nodes.push(passthrough);
             // Rewire: original edge -> two edges through the new node.
-            candidate.connections[ci] = Connection::new(conn.from_node.clone(), conn.from_port, new_id.clone());
+            candidate.connections[ci] =
+                Connection::new(conn.from_node.clone(), conn.from_port, new_id.clone());
             candidate
                 .connections
                 .push(Connection::new(new_id, 0, conn.to_node.clone()));
@@ -110,8 +111,11 @@ impl Mutation for RemovePassthrough {
             let id = node.id.as_str();
             let preds: Vec<&Connection> =
                 wf.connections.iter().filter(|c| c.to_node == id).collect();
-            let succs: Vec<&Connection> =
-                wf.connections.iter().filter(|c| c.from_node == id).collect();
+            let succs: Vec<&Connection> = wf
+                .connections
+                .iter()
+                .filter(|c| c.from_node == id)
+                .collect();
             // Only remove a "simple" passthrough (has both predecessors and
             // successors) so the graph stays connected.
             if preds.is_empty() || succs.is_empty() {
@@ -120,13 +124,17 @@ impl Mutation for RemovePassthrough {
 
             let mut candidate = wf.clone();
             candidate.nodes.retain(|n| n.id != id);
-            candidate.connections.retain(|c| c.from_node != id && c.to_node != id);
+            candidate
+                .connections
+                .retain(|c| c.from_node != id && c.to_node != id);
             // Reconnect: each predecessor's port -> each successor's target.
             for p in &preds {
                 for s in &succs {
-                    candidate
-                        .connections
-                        .push(Connection::new(p.from_node.clone(), p.from_port, s.to_node.clone()));
+                    candidate.connections.push(Connection::new(
+                        p.from_node.clone(),
+                        p.from_port,
+                        s.to_node.clone(),
+                    ));
                 }
             }
             out.push(candidate);

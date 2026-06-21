@@ -67,7 +67,11 @@ impl SemanticRelation {
     pub fn inputs(&self) -> Vec<Vec<Value>> {
         match self {
             SemanticRelation::FieldScaling { base_input, .. } => vec![base_input.clone()],
-            SemanticRelation::AppendAddsOutputs { base_input, passing_extra, .. } => {
+            SemanticRelation::AppendAddsOutputs {
+                base_input,
+                passing_extra,
+                ..
+            } => {
                 vec![base_input.clone(), passing_extra.clone()]
             }
             SemanticRelation::CountConservation { input } => vec![input.clone()],
@@ -78,10 +82,19 @@ impl SemanticRelation {
     #[must_use]
     pub fn name(&self) -> String {
         match self {
-            SemanticRelation::FieldScaling { in_field, out_field, factor, .. } => {
+            SemanticRelation::FieldScaling {
+                in_field,
+                out_field,
+                factor,
+                ..
+            } => {
                 format!("field_scaling {in_field}*{factor}→Σ{out_field}")
             }
-            SemanticRelation::AppendAddsOutputs { passing_extra, per_item, .. } => {
+            SemanticRelation::AppendAddsOutputs {
+                passing_extra,
+                per_item,
+                ..
+            } => {
                 format!("append_adds_outputs +{}*{per_item}", passing_extra.len())
             }
             SemanticRelation::CountConservation { .. } => "count_conservation".to_string(),
@@ -106,19 +119,35 @@ impl SemanticRelation {
                 factor,
                 base_input,
             } => {
-                self.check_scaling(harness, wf, observe_node, in_field, out_field, *factor, base_input)
-                    .await
+                self.check_scaling(
+                    harness,
+                    wf,
+                    observe_node,
+                    in_field,
+                    out_field,
+                    *factor,
+                    base_input,
+                )
+                .await
             }
             SemanticRelation::AppendAddsOutputs {
                 base_input,
                 passing_extra,
                 per_item,
             } => {
-                self.check_append(harness, wf, observe_node, base_input, passing_extra, *per_item)
-                    .await
+                self.check_append(
+                    harness,
+                    wf,
+                    observe_node,
+                    base_input,
+                    passing_extra,
+                    *per_item,
+                )
+                .await
             }
             SemanticRelation::CountConservation { input } => {
-                self.check_conservation(harness, wf, observe_node, input).await
+                self.check_conservation(harness, wf, observe_node, input)
+                    .await
             }
         }
     }
@@ -134,7 +163,9 @@ impl SemanticRelation {
         factor: f64,
         base_input: &[Value],
     ) -> Result<CheckResult, VerifyError> {
-        let base_out = harness.observe(wf, observe_node, base_input.to_vec()).await?;
+        let base_out = harness
+            .observe(wf, observe_node, base_input.to_vec())
+            .await?;
         let scaled_input: Vec<Value> = base_input
             .iter()
             .map(|item| scale_field(item, in_field, factor))
@@ -175,7 +206,9 @@ impl SemanticRelation {
         passing_extra: &[Value],
         per_item: usize,
     ) -> Result<CheckResult, VerifyError> {
-        let base_out = harness.observe(wf, observe_node, base_input.to_vec()).await?;
+        let base_out = harness
+            .observe(wf, observe_node, base_input.to_vec())
+            .await?;
         let mut combined = base_input.to_vec();
         combined.extend(passing_extra.iter().cloned());
         let combined_out = harness.observe(wf, observe_node, combined).await?;

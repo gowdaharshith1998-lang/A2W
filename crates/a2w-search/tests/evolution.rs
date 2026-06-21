@@ -3,9 +3,7 @@
 //! generates is M1-valid by construction, and the search is deterministic.
 
 use a2w_ir::{Connection, Node, NodeKind, Workflow, SCHEMA_VERSION};
-use a2w_search::{
-    evolve, InsertPassthrough, Mutation, SearchConfig, SetTransformField,
-};
+use a2w_search::{evolve, InsertPassthrough, Mutation, SearchConfig, SetTransformField};
 use a2w_verify::{
     GoldenFixture, MatchMode, SpecAssertion, VerificationHarness, VerificationPlan, WorkflowSpec,
 };
@@ -77,9 +75,16 @@ async fn search_improves_certified_holdout_score() {
     let fitness = VerificationPlan::new("total").with_golden(vec![golden("fit", 10, 2)]);
     let holdout = VerificationPlan::new("total").with_golden(vec![golden("hold", 5, 3)]);
 
-    let outcome = evolve(&harness, &seed, &fitness, &holdout, &rich_operators(), SearchConfig::default())
-        .await
-        .expect("search");
+    let outcome = evolve(
+        &harness,
+        &seed,
+        &fitness,
+        &holdout,
+        &rich_operators(),
+        SearchConfig::default(),
+    )
+    .await
+    .expect("search");
 
     // The certified (holdout) score improved and is perfect.
     assert!(
@@ -88,14 +93,25 @@ async fn search_improves_certified_holdout_score() {
         outcome.initial_holdout_score,
         outcome.best_holdout_score
     );
-    assert!(outcome.best_holdout_score >= 1.0, "certified holdout score perfect");
+    assert!(
+        outcome.best_holdout_score >= 1.0,
+        "certified holdout score perfect"
+    );
     assert!(outcome.best_fitness_score >= 1.0);
     // Legit improvement: fitness gains are reflected in the holdout → no overfit.
-    assert!(!outcome.overfit(), "overfit_gap should be ~0, got {}", outcome.overfit_gap);
+    assert!(
+        !outcome.overfit(),
+        "overfit_gap should be ~0, got {}",
+        outcome.overfit_gap
+    );
 
     // The winner really computes price*qty.
     let out = harness
-        .observe(&outcome.best_workflow, "total", vec![json!({ "price": 7, "qty": 6 })])
+        .observe(
+            &outcome.best_workflow,
+            "total",
+            vec![json!({ "price": 7, "qty": 6 })],
+        )
         .await
         .unwrap();
     assert_eq!(out[0]["total"], json!(42.0)); // expression arithmetic is f64
@@ -126,20 +142,37 @@ async fn search_overfit_is_surfaced_not_hidden() {
         frozen: vec![],
     })];
 
-    let outcome = evolve(&harness, &seed, &fitness, &holdout, &ops, SearchConfig::default())
-        .await
-        .expect("search");
+    let outcome = evolve(
+        &harness,
+        &seed,
+        &fitness,
+        &holdout,
+        &ops,
+        SearchConfig::default(),
+    )
+    .await
+    .expect("search");
 
     // The search "won" on the metric it optimized...
-    assert!(outcome.best_fitness_score >= 1.0, "fitness hit its (gappy) ceiling");
-    assert!(outcome.improved_on_fitness(), "fitness improved from the seed");
+    assert!(
+        outcome.best_fitness_score >= 1.0,
+        "fitness hit its (gappy) ceiling"
+    );
+    assert!(
+        outcome.improved_on_fitness(),
+        "fitness improved from the seed"
+    );
     // ...but the CERTIFIED (holdout) score reveals it is not actually correct.
     assert!(
         outcome.best_holdout_score < 1.0,
         "holdout must reveal the gap; got {}",
         outcome.best_holdout_score
     );
-    assert!(outcome.overfit(), "overfit_gap must be surfaced: {}", outcome.overfit_gap);
+    assert!(
+        outcome.overfit(),
+        "overfit_gap must be surfaced: {}",
+        outcome.overfit_gap
+    );
     // The honest report we'd hand to promotion is the holdout one.
     assert!(outcome.best_holdout_report.score() < 1.0);
     // And the certified metric did NOT actually improve — the gain was illusory.
@@ -172,12 +205,26 @@ async fn search_is_deterministic() {
     let fitness = VerificationPlan::new("total").with_golden(vec![golden("fit", 10, 2)]);
     let holdout = VerificationPlan::new("total").with_golden(vec![golden("hold", 5, 3)]);
 
-    let a = evolve(&harness, &seed, &fitness, &holdout, &rich_operators(), SearchConfig::default())
-        .await
-        .unwrap();
-    let b = evolve(&harness, &seed, &fitness, &holdout, &rich_operators(), SearchConfig::default())
-        .await
-        .unwrap();
+    let a = evolve(
+        &harness,
+        &seed,
+        &fitness,
+        &holdout,
+        &rich_operators(),
+        SearchConfig::default(),
+    )
+    .await
+    .unwrap();
+    let b = evolve(
+        &harness,
+        &seed,
+        &fitness,
+        &holdout,
+        &rich_operators(),
+        SearchConfig::default(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(a.best_fitness_score, b.best_fitness_score);
     assert_eq!(a.best_holdout_score, b.best_holdout_score);
@@ -201,10 +248,20 @@ async fn guard_rejects_fitness_holdout_sharing_inputs() {
     let holdout = VerificationPlan::new("total").with_golden(vec![shared]);
 
     assert!(shared_evidence(&fitness, &holdout).is_some());
-    let err = evolve(&harness, &seed, &fitness, &holdout, &rich_operators(), SearchConfig::default())
-        .await
-        .expect_err("shared evidence must be rejected");
-    assert!(matches!(err, SearchError::CorrelatedEvidence(_)), "got {err:?}");
+    let err = evolve(
+        &harness,
+        &seed,
+        &fitness,
+        &holdout,
+        &rich_operators(),
+        SearchConfig::default(),
+    )
+    .await
+    .expect_err("shared evidence must be rejected");
+    assert!(
+        matches!(err, SearchError::CorrelatedEvidence(_)),
+        "got {err:?}"
+    );
 }
 
 #[tokio::test]
@@ -252,9 +309,16 @@ async fn disjoint_holdout_catches_a_fitness_gap() {
         vocabulary: vec![("total".to_string(), json!(0))],
         frozen: vec![],
     })];
-    let outcome = evolve(&harness, &seed, &fitness, &holdout, &ops, SearchConfig::default())
-        .await
-        .expect("search");
+    let outcome = evolve(
+        &harness,
+        &seed,
+        &fitness,
+        &holdout,
+        &ops,
+        SearchConfig::default(),
+    )
+    .await
+    .expect("search");
     // Fitness was satisfied; the holdout reveals the defect the gap hid.
     assert!(outcome.best_fitness_score >= 1.0);
     assert!(
@@ -271,11 +335,21 @@ async fn search_on_already_perfect_seed_does_not_regress() {
     let fitness = VerificationPlan::new("total").with_golden(vec![golden("fit", 10, 2)]);
     let holdout = VerificationPlan::new("total").with_golden(vec![golden("hold", 5, 3)]);
 
-    let outcome = evolve(&harness, &good, &fitness, &holdout, &rich_operators(), SearchConfig::default())
-        .await
-        .unwrap();
+    let outcome = evolve(
+        &harness,
+        &good,
+        &fitness,
+        &holdout,
+        &rich_operators(),
+        SearchConfig::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(outcome.initial_fitness_score, 1.0);
     assert_eq!(outcome.best_holdout_score, 1.0);
-    assert!(!outcome.improved_on_holdout(), "nothing to improve on a perfect seed");
+    assert!(
+        !outcome.improved_on_holdout(),
+        "nothing to improve on a perfect seed"
+    );
     assert!(!outcome.overfit());
 }

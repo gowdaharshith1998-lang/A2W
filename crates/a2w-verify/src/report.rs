@@ -84,7 +84,11 @@ pub struct CheckResult {
 impl CheckResult {
     /// Construct a passing result.
     #[must_use]
-    pub fn pass(category: CheckCategory, name: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub fn pass(
+        category: CheckCategory,
+        name: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
         Self {
             category,
             name: name.into(),
@@ -95,7 +99,11 @@ impl CheckResult {
 
     /// Construct a failing result.
     #[must_use]
-    pub fn fail(category: CheckCategory, name: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub fn fail(
+        category: CheckCategory,
+        name: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
         Self {
             category,
             name: name.into(),
@@ -181,7 +189,10 @@ impl ConfidenceReport {
     /// Number of checks in a given category.
     #[must_use]
     pub fn count_in(&self, category: CheckCategory) -> usize {
-        self.checks.iter().filter(|c| c.category == category).count()
+        self.checks
+            .iter()
+            .filter(|c| c.category == category)
+            .count()
     }
 
     /// Number of *passing* checks in a given category.
@@ -343,7 +354,12 @@ impl ConfidenceReport {
         } else {
             lines.push(format!("  {} failing check(s):", failures.len()));
             for f in failures {
-                lines.push(format!("    - [{}] {}: {}", f.category.label(), f.name, f.detail));
+                lines.push(format!(
+                    "    - [{}] {}: {}",
+                    f.category.label(),
+                    f.name,
+                    f.detail
+                ));
             }
         }
         lines.join("\n")
@@ -386,7 +402,10 @@ mod tests {
         assert_eq!(r.score(), 0.0);
         assert!(!r.meets(&Threshold::default()));
         let s = r.summary();
-        assert!(s.contains("OUTCOME: UNVERIFIED — engine-verified only"), "{s}");
+        assert!(
+            s.contains("OUTCOME: UNVERIFIED — engine-verified only"),
+            "{s}"
+        );
         assert!(s.contains("[engine, not outcome]"), "{s}");
     }
 
@@ -395,7 +414,11 @@ mod tests {
         let mut r = ConfidenceReport::new("wf", "n");
         r.push(CheckResult::pass(CheckCategory::Spec, "count", "ok"));
         r.push(semantic("scaling", true));
-        r.push(CheckResult::pass(CheckCategory::EngineInvariant, "rerun", "held"));
+        r.push(CheckResult::pass(
+            CheckCategory::EngineInvariant,
+            "rerun",
+            "held",
+        ));
         assert_eq!(r.score(), 1.0);
         assert!(r.meets(&Threshold::default()));
     }
@@ -418,7 +441,11 @@ mod tests {
         let mut r = ConfidenceReport::new("wf", "n");
         r.push(CheckResult::pass(CheckCategory::Spec, "a", "ok"));
         r.push(semantic("scaling", true));
-        r.push(CheckResult::fail(CheckCategory::EngineInvariant, "rerun", "non-deterministic"));
+        r.push(CheckResult::fail(
+            CheckCategory::EngineInvariant,
+            "rerun",
+            "non-deterministic",
+        ));
         // Outcome score is perfect, but a failing engine-invariant blocks it.
         assert_eq!(r.score(), 1.0);
         assert!(!r.meets(&Threshold::default()));

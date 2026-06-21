@@ -143,7 +143,10 @@ impl SpecAssertion {
                     if any {
                         format!("at least one item has '{path}' == expected")
                     } else {
-                        format!("no item had '{path}' == expected ({} item(s))", output.len())
+                        format!(
+                            "no item had '{path}' == expected ({} item(s))",
+                            output.len()
+                        )
                     },
                 )
             }

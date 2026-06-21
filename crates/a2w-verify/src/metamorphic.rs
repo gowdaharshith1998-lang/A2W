@@ -101,8 +101,14 @@ impl MetamorphicSuite {
         }
         if self.duplication_factor >= 2 {
             results.push(
-                check_duplication(harness, wf, observe_node, &self.seed, self.duplication_factor)
-                    .await?,
+                check_duplication(
+                    harness,
+                    wf,
+                    observe_node,
+                    &self.seed,
+                    self.duplication_factor,
+                )
+                .await?,
             );
         }
         if self.additivity {

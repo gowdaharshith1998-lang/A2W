@@ -791,8 +791,12 @@ async fn wf_verify_reports_outcome_and_engine_separately() {
     // Outcome score is over outcome evidence only; engine invariants are listed
     // but do not contribute to the outcome score.
     let checks = report["checks"].as_array().unwrap();
-    assert!(checks.iter().any(|c| c["category"] == json!("semantic_relation")));
-    assert!(checks.iter().any(|c| c["category"] == json!("engine_invariant")));
+    assert!(checks
+        .iter()
+        .any(|c| c["category"] == json!("semantic_relation")));
+    assert!(checks
+        .iter()
+        .any(|c| c["category"] == json!("engine_invariant")));
     // The summary states outcome status explicitly.
     let summary = report.to_string();
     assert!(summary.contains("OUTCOME"));

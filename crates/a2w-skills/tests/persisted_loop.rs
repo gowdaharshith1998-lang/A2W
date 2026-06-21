@@ -42,11 +42,13 @@ async fn holdout_report(wf: &Workflow, observe: &str) -> a2w_verify::ConfidenceR
                 value: json!(true),
             }],
         })
-        .with_semantic(SemanticSuite::new(vec![SemanticRelation::AppendAddsOutputs {
-            base_input: seed(4),
-            passing_extra: vec![json!({ "id": 1000 })],
-            per_item: 1,
-        }]));
+        .with_semantic(SemanticSuite::new(vec![
+            SemanticRelation::AppendAddsOutputs {
+                base_input: seed(4),
+                passing_extra: vec![json!({ "id": 1000 })],
+                per_item: 1,
+            },
+        ]));
     verify(&harness, wf, &plan).await.expect("verify")
 }
 
@@ -105,7 +107,9 @@ async fn persisted_promotion_is_gated_on_holdout_evidence() {
 
     // With real holdout evidence the same workflow IS persisted.
     let report = holdout_report(&wf, "tag").await;
-    lib.promote("tag", wf, "tag", &report).await.expect("promote");
+    lib.promote("tag", wf, "tag", &report)
+        .await
+        .expect("promote");
     assert_eq!(lib.len().await.unwrap(), 1);
 }
 
@@ -116,7 +120,10 @@ async fn re_promotion_upserts_not_duplicates() {
     let wf = tagging_workflow("wf_tag");
     let report = holdout_report(&wf, "tag").await;
 
-    let id1 = lib.promote("tag alerts", wf.clone(), "tag", &report).await.unwrap();
+    let id1 = lib
+        .promote("tag alerts", wf.clone(), "tag", &report)
+        .await
+        .unwrap();
     let id2 = lib
         .promote("tag the alerts differently", wf, "tag", &report)
         .await

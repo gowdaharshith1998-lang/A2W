@@ -786,7 +786,15 @@ impl Store {
         Ok(rows
             .into_iter()
             .map(
-                |(id, query, observe_node, workflow_json, signature_json, evidence_json, holdout_score)| {
+                |(
+                    id,
+                    query,
+                    observe_node,
+                    workflow_json,
+                    signature_json,
+                    evidence_json,
+                    holdout_score,
+                )| {
                     SkillRecord {
                         id,
                         query,
@@ -2308,7 +2316,11 @@ mod tests {
         };
         store.save_skill(&rec).await.expect("save skill");
 
-        let got = store.get_skill("skill_abc").await.expect("get").expect("present");
+        let got = store
+            .get_skill("skill_abc")
+            .await
+            .expect("get")
+            .expect("present");
         assert_eq!(got, rec);
 
         // Upsert: re-save with a new score updates in place (no duplicate row).
@@ -2322,7 +2334,11 @@ mod tests {
         assert_eq!(all[0].holdout_score, 0.5);
         assert_eq!(all[0].query, "tag the alerts");
 
-        assert!(store.get_skill("missing").await.expect("get missing").is_none());
+        assert!(store
+            .get_skill("missing")
+            .await
+            .expect("get missing")
+            .is_none());
     }
 
     #[tokio::test]

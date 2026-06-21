@@ -422,22 +422,39 @@ fn check_node_params(node: &Node, targets: &HashSet<&str>, findings: &mut Vec<Fi
     match node.kind {
         K::HttpRequest => {
             match p.get("url") {
-                None => missing(findings, id, "url",
-                    "http_request requires a `url` string param"),
-                Some(serde_json::Value::String(s)) if s.is_empty() => bad_type(findings, id, "url",
-                    "http_request `url` must be a non-empty string"),
+                None => missing(
+                    findings,
+                    id,
+                    "url",
+                    "http_request requires a `url` string param",
+                ),
+                Some(serde_json::Value::String(s)) if s.is_empty() => bad_type(
+                    findings,
+                    id,
+                    "url",
+                    "http_request `url` must be a non-empty string",
+                ),
                 Some(serde_json::Value::String(_)) => {}
-                Some(_) => bad_type(findings, id, "url",
-                    "http_request `url` must be a string"),
+                Some(_) => bad_type(findings, id, "url", "http_request `url` must be a string"),
             }
             if let Some(method) = p.get("method") {
                 if !method.is_string() {
-                    bad_type(findings, id, "method", "http_request `method` must be a string");
+                    bad_type(
+                        findings,
+                        id,
+                        "method",
+                        "http_request `method` must be a string",
+                    );
                 }
             }
             if let Some(headers) = p.get("headers") {
                 if !headers.is_object() {
-                    bad_type(findings, id, "headers", "http_request `headers` must be an object");
+                    bad_type(
+                        findings,
+                        id,
+                        "headers",
+                        "http_request `headers` must be an object",
+                    );
                 }
             }
         }
@@ -455,21 +472,37 @@ fn check_node_params(node: &Node, targets: &HashSet<&str>, findings: &mut Vec<Fi
             Some(serde_json::Value::String(_)) => {} // shorthand path
             Some(serde_json::Value::Object(o)) => {
                 if !o.contains_key("path") {
-                    missing(findings, id, "condition.path",
-                        "branch `condition` object must contain a `path`");
+                    missing(
+                        findings,
+                        id,
+                        "condition.path",
+                        "branch `condition` object must contain a `path`",
+                    );
                 } else if !o["path"].is_string() {
-                    bad_type(findings, id, "condition.path",
-                        "branch `condition.path` must be a string");
+                    bad_type(
+                        findings,
+                        id,
+                        "condition.path",
+                        "branch `condition.path` must be a string",
+                    );
                 }
                 if let Some(op) = o.get("op") {
                     if !op.is_string() {
-                        bad_type(findings, id, "condition.op",
-                            "branch `condition.op` must be a string (truthy|eq|ne|contains)");
+                        bad_type(
+                            findings,
+                            id,
+                            "condition.op",
+                            "branch `condition.op` must be a string (truthy|eq|ne|contains)",
+                        );
                     }
                 }
             }
-            Some(_) => bad_type(findings, id, "condition",
-                "branch `condition` must be a JSON pointer string or { path, op?, value? }"),
+            Some(_) => bad_type(
+                findings,
+                id,
+                "condition",
+                "branch `condition` must be a JSON pointer string or { path, op?, value? }",
+            ),
         },
         K::Switch => {
             match p.get("key") {
@@ -478,25 +511,39 @@ fn check_node_params(node: &Node, targets: &HashSet<&str>, findings: &mut Vec<Fi
                 Some(_) => bad_type(findings, id, "key", "switch `key` must be a string"),
             }
             match p.get("cases") {
-                None => missing(findings, id, "cases",
-                    "switch requires a `cases` array"),
+                None => missing(findings, id, "cases", "switch requires a `cases` array"),
                 Some(serde_json::Value::Array(arr)) => {
                     for (i, c) in arr.iter().enumerate() {
                         let Some(obj) = c.as_object() else {
-                            bad_type(findings, id, &format!("cases[{i}]"),
-                                "each switch case must be an object { value, port }");
+                            bad_type(
+                                findings,
+                                id,
+                                &format!("cases[{i}]"),
+                                "each switch case must be an object { value, port }",
+                            );
                             continue;
                         };
                         if !obj.contains_key("value") {
-                            missing(findings, id, &format!("cases[{i}].value"),
-                                "each switch case must include a `value`");
+                            missing(
+                                findings,
+                                id,
+                                &format!("cases[{i}].value"),
+                                "each switch case must include a `value`",
+                            );
                         }
                         match obj.get("port") {
-                            None => missing(findings, id, &format!("cases[{i}].port"),
-                                "each switch case must include a `port` (non-negative integer)"),
-                            Some(v) if v.as_u64().is_none() =>
-                                bad_type(findings, id, &format!("cases[{i}].port"),
-                                    "switch case `port` must be a non-negative integer"),
+                            None => missing(
+                                findings,
+                                id,
+                                &format!("cases[{i}].port"),
+                                "each switch case must include a `port` (non-negative integer)",
+                            ),
+                            Some(v) if v.as_u64().is_none() => bad_type(
+                                findings,
+                                id,
+                                &format!("cases[{i}].port"),
+                                "switch case `port` must be a non-negative integer",
+                            ),
                             _ => {}
                         }
                     }
@@ -510,37 +557,66 @@ fn check_node_params(node: &Node, targets: &HashSet<&str>, findings: &mut Vec<Fi
             Some(_) => bad_type(findings, id, "over", "loop `over` must be a string"),
         },
         K::Wait => match p.get("duration_ms") {
-            None => missing(findings, id, "duration_ms",
-                "wait requires a `duration_ms` non-negative integer"),
-            Some(v) if v.as_u64().is_none() => bad_type(findings, id, "duration_ms",
-                "wait `duration_ms` must be a non-negative integer"),
+            None => missing(
+                findings,
+                id,
+                "duration_ms",
+                "wait requires a `duration_ms` non-negative integer",
+            ),
+            Some(v) if v.as_u64().is_none() => bad_type(
+                findings,
+                id,
+                "duration_ms",
+                "wait `duration_ms` must be a non-negative integer",
+            ),
             _ => {}
         },
         K::SubWorkflow => {
             let has_id = p.get("workflow_id").is_some();
             let has_inline = p.get("workflow").is_some();
             if !has_id && !has_inline {
-                missing(findings, id, "workflow_id|workflow",
-                    "sub_workflow requires either `workflow_id` or an inline `workflow`");
+                missing(
+                    findings,
+                    id,
+                    "workflow_id|workflow",
+                    "sub_workflow requires either `workflow_id` or an inline `workflow`",
+                );
             }
             if has_id && !p["workflow_id"].is_string() {
-                bad_type(findings, id, "workflow_id",
-                    "sub_workflow `workflow_id` must be a string");
+                bad_type(
+                    findings,
+                    id,
+                    "workflow_id",
+                    "sub_workflow `workflow_id` must be a string",
+                );
             }
             if has_inline && !p["workflow"].is_object() {
-                bad_type(findings, id, "workflow",
-                    "sub_workflow inline `workflow` must be an object");
+                bad_type(
+                    findings,
+                    id,
+                    "workflow",
+                    "sub_workflow inline `workflow` must be an object",
+                );
             }
         }
         K::LlmCall => match p.get("prompt") {
-            None => missing(findings, id, "prompt", "llm_call requires a `prompt` string"),
+            None => missing(
+                findings,
+                id,
+                "prompt",
+                "llm_call requires a `prompt` string",
+            ),
             Some(serde_json::Value::String(_)) => {}
             Some(_) => bad_type(findings, id, "prompt", "llm_call `prompt` must be a string"),
         },
         K::McpToolCall => {
             if p.get("server").is_none() && p.get("command").is_none() {
-                missing(findings, id, "server|command",
-                    "mcp_tool_call requires a `server` spec or a `command`");
+                missing(
+                    findings,
+                    id,
+                    "server|command",
+                    "mcp_tool_call requires a `server` spec or a `command`",
+                );
             }
             if p.get("tool").is_none() {
                 missing(findings, id, "tool", "mcp_tool_call requires a `tool` name");
@@ -550,22 +626,42 @@ fn check_node_params(node: &Node, targets: &HashSet<&str>, findings: &mut Vec<Fi
             // CodeStep runs a sandboxed WASM module: it needs a `wasm` source
             // ({ base64 } or { path }) plus a `function` export name.
             match p.get("wasm") {
-                None => missing(findings, id, "wasm",
-                    "code_step requires a `wasm` source ({ base64} or { path })"),
+                None => missing(
+                    findings,
+                    id,
+                    "wasm",
+                    "code_step requires a `wasm` source ({ base64} or { path })",
+                ),
                 Some(serde_json::Value::Object(w)) => {
                     if !w.contains_key("base64") && !w.contains_key("path") {
-                        missing(findings, id, "wasm.base64|wasm.path",
-                            "code_step `wasm` must contain `base64` or `path`");
+                        missing(
+                            findings,
+                            id,
+                            "wasm.base64|wasm.path",
+                            "code_step `wasm` must contain `base64` or `path`",
+                        );
                     }
                 }
-                Some(_) => bad_type(findings, id, "wasm",
-                    "code_step `wasm` must be an object ({ base64 } or { path })"),
+                Some(_) => bad_type(
+                    findings,
+                    id,
+                    "wasm",
+                    "code_step `wasm` must be an object ({ base64 } or { path })",
+                ),
             }
             match p.get("function") {
-                None => missing(findings, id, "function",
-                    "code_step requires a `function` export name"),
-                Some(v) if !v.is_string() => bad_type(findings, id, "function",
-                    "code_step `function` must be a string"),
+                None => missing(
+                    findings,
+                    id,
+                    "function",
+                    "code_step requires a `function` export name",
+                ),
+                Some(v) if !v.is_string() => bad_type(
+                    findings,
+                    id,
+                    "function",
+                    "code_step `function` must be a string",
+                ),
                 _ => {}
             }
         }
@@ -945,7 +1041,10 @@ mod tests {
             .iter()
             .filter(|f| f.code == FindingCode::MissingRequiredParam)
             .collect();
-        assert!(missing.len() >= 2, "should flag both key and cases: {missing:?}");
+        assert!(
+            missing.len() >= 2,
+            "should flag both key and cases: {missing:?}"
+        );
         assert!(!report.is_valid);
     }
 

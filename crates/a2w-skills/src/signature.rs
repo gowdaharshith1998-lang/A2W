@@ -107,7 +107,10 @@ fn histogram_cosine(a: &BTreeMap<String, usize>, b: &BTreeMap<String, usize>) ->
         }
     }
     let norm = |m: &BTreeMap<String, usize>| -> f64 {
-        m.values().map(|v| (*v as f64) * (*v as f64)).sum::<f64>().sqrt()
+        m.values()
+            .map(|v| (*v as f64) * (*v as f64))
+            .sum::<f64>()
+            .sqrt()
     };
     let denom = norm(a) * norm(b);
     if denom == 0.0 {

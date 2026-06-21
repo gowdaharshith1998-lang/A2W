@@ -806,18 +806,13 @@ impl A2wServer {
             input.metamorphic,
         )?;
         let harness = VerificationHarness::new();
-        let report = verify(&harness, &wf, &plan)
-            .await
-            .map_err(verify_error)?;
+        let report = verify(&harness, &wf, &plan).await.map_err(verify_error)?;
         // Surface the calibrated headline alongside the structured report so the
         // agent can never mistake engine-verification for outcome-verification.
         let mut value = serde_json::to_value(&report).map_err(internal)?;
         if let Value::Object(map) = &mut value {
             map.insert("summary".to_string(), Value::String(report.summary()));
-            map.insert(
-                "outcome_score".to_string(),
-                json!(report.score()),
-            );
+            map.insert("outcome_score".to_string(), json!(report.score()));
             map.insert(
                 "outcome_verified".to_string(),
                 json!(report.meets(&a2w_verify::Threshold::default())),
@@ -849,9 +844,7 @@ impl A2wServer {
             holdout_parts.metamorphic,
         )?;
         let harness = VerificationHarness::new();
-        let report = verify(&harness, &wf, &plan)
-            .await
-            .map_err(verify_error)?;
+        let report = verify(&harness, &wf, &plan).await.map_err(verify_error)?;
 
         let lib = PersistentSkillLibrary::with_default_threshold(store);
         let id = lib
@@ -1335,8 +1328,7 @@ fn verify_error(err: a2w_verify::VerifyError) -> ErrorData {
 fn skill_error(err: a2w_skills::PersistError) -> ErrorData {
     match &err {
         a2w_skills::PersistError::Skill(a2w_skills::SkillError::BelowThreshold {
-            summary,
-            ..
+            summary, ..
         }) => ErrorData::invalid_params(
             format!("not promoted: {err}"),
             Some(json!({ "summary": summary })),

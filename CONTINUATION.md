@@ -5,6 +5,71 @@ Pick up here in a new session. A2W = agent-native, Rust alternative to n8n
 
 ---
 
+## SESSION: fixer pass (F1–F5) — honesty + Goodhart + closing the loop
+
+Fixed two thesis-level defects and three gaps a review found in the M0–M5 work.
+**Calibrated status** — what was checked, and what was not.
+
+### F1 — Honest verification taxonomy (engine-invariant vs outcome)
+The metamorphic relations (rerun/permutation/duplication/additivity) hold for
+**any** valid workflow because the engine is deterministic + per-item-independent
+by construction. They verify the *engine*, not the *outcome*, and the report no
+longer lets one read as the other.
+- `CheckCategory` split into `EngineInvariant` (not outcome) vs outcome
+  categories (`Spec`, `Golden`, `CrossCheck`, new `SemanticRelation`).
+  `is_outcome_evidence()`.
+- New `a2w-verify::semantic`: spec-derived relations authored from intent
+  (`FieldScaling`, `AppendAddsOutputs`, `CountConservation`).
+- `ConfidenceReport::score()` is the **outcome** score (0.0 with no outcome
+  evidence regardless of engine-invariants); `meets()` requires outcome evidence
+  + ≥1 semantic relation; `summary()` prints "OUTCOME: UNVERIFIED — engine-
+  verified only" when only engine-invariants ran.
+- DoD test: a wrong-field workflow passes every engine-invariant but FAILS the
+  semantic scaling relation; engine-invariant-only report never clears the gate.
+
+### F2 — Kill the Goodhart loop (fitness/holdout split)
+Search optimizes the confidence score, so that score can't also certify the
+winner. `evolve(seed, fitness, holdout, …)` ranks by **fitness** only and
+re-scores the winner on a **disjoint holdout**; `SearchOutcome` reports
+`best_fitness_score`, `best_holdout_score` (certified), `overfit_gap`,
+`best_holdout_report` (→ M4 promotion). Still RNG-free / byte-identical reruns.
+- DoD tests: legit improvement (holdout improves, gap ~0); overfit surfaced
+  (gappy fitness maxed to 1.0 by a constant, holdout < 1, gap > 0).
+
+### F3 — Enforce decoupling (no correlated blind spots)
+`a2w-search::disjoint` fingerprints each plan's inputs / assertions / fixtures /
+relations; `evolve()` errors (`SearchError::CorrelatedEvidence`) if fitness and
+holdout share any. DoD: identical fixtures/assertions rejected; a disjoint
+holdout catches a fitness gap.
+
+### F4 — Close the loop in the running system
+- `a2w-store` **v5 → v6**: `skills` table (workflow IR + signature + evidence +
+  holdout score). Self-healing `CREATE TABLE IF NOT EXISTS`; version bump after.
+- `a2w-skills::PersistentSkillLibrary` over a `Store`, same promotion gate.
+- MCP tools `wf_verify` / `wf_promote_skill` / `wf_find_skill`; REST
+  `POST /verify`, `POST /skills`, `GET /skills`. Promotion gated on the HOLDOUT.
+- DoD: integration tests run author → verify(holdout) → promote → retrieve
+  through a **persisted** store (fresh handle) and through MCP + REST; v6
+  migration round-trips idempotently.
+
+### F5 — Honest-claims sweep + CI
+- README/CONTINUATION distinguish engine- vs outcome-verification and state that
+  search reports holdout-certified scores.
+- Local gate green: `cargo build/test --workspace` (**346 tests, 0 fail**),
+  `cargo clippy --workspace --all-targets -D warnings`, `cargo deny check`, and
+  a release build of `a2w-server` + `a2w-mcp` (the Docker image binaries; Docker
+  itself is not installed locally — the GitHub `docker` job builds the image).
+- **GitHub CI for the pushed commit: see the bottom of this file / the commit
+  status.** (Recorded after the push + `gh run watch`.)
+
+### Honest limitations (unchanged + new)
+- Engine-invariants assert engine guarantees only; outcome correctness still
+  depends on the spec/golden/semantic evidence the author supplies.
+- Skill retrieval loads all rows in memory (fine at current scale).
+- M6 (query-adaptive sampling) deferred behind the multi-tenant auth wall.
+
+---
+
 ## SESSION: correctness/self-improvement build (M0–M5)
 
 This session executed the "provable correctness + self-improvement" build
@@ -110,11 +175,11 @@ Added `a2w-verify`, `a2w-skills`, `a2w-search` to the workspace (members +
 - **Build:** Linux + rustup stable. C toolchain extracted to
   `~/.local/gcc-prefix/usr/bin` (no root); every cargo invocation needs
   `PATH="$HOME/.local/gcc-prefix/usr/bin:$HOME/.cargo/bin:$PATH"`.
-- **State:** **20 crates**, **329 tests, clippy-clean, cargo-deny clean**
-  (local). See the "SESSION: correctness/self-improvement build (M0–M5)"
-  section above for what landed this session; the notes below this point
-  describe the earlier hardening passes (which said "17 crates / 289 tests").
-  Every NodeKind has a tested executor.
+- **State:** **20 crates**, **346 tests, clippy-clean, cargo-deny clean**
+  (local), **schema v6**. See the "SESSION: fixer pass (F1–F5)" and "SESSION:
+  correctness/self-improvement build (M0–M5)" sections above for what landed;
+  the notes below describe the earlier hardening passes ("17 crates / 289
+  tests"). Every NodeKind has a tested executor.
 
 ## Round-3 work (this session)
 
