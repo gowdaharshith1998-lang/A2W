@@ -164,6 +164,4 @@ is gated behind the multi-tenant auth wall; Postgres needs SQL-portability work.
 - **[Production guide](./docs/PRODUCTION.md)** — env-var contract, endpoints, Docker, threat model.
 - **[Engineering log](./docs/CONTINUATION.md)** — the build/audit history and current state.
 
-<div align="center">
-<sub>Licensed under <a href="./LICENSE">Apache-2.0</a>.</sub>
 </div>
