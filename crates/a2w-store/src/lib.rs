@@ -539,6 +539,22 @@ impl Store {
             version = 6;
             self.set_schema_version(version).await?;
         }
+
+        // ---- v6 -> v7: step_records.external_calls + tokens (durable metrics) -
+        // Persist the per-node real outbound-call count and LLM token usage the
+        // engine now reports, so they survive in the run history (not just the
+        // in-memory run response). `let _ =` tolerates re-applying the ALTER on
+        // a DB that already has the column (mirrors the v3->v4 node_kind add).
+        if version < 7 {
+            let _ = sqlx::query("ALTER TABLE step_records ADD COLUMN external_calls INTEGER")
+                .execute(&self.pool)
+                .await;
+            let _ = sqlx::query("ALTER TABLE step_records ADD COLUMN tokens INTEGER")
+                .execute(&self.pool)
+                .await;
+            version = 7;
+            self.set_schema_version(version).await?;
+        }
         let _ = version;
 
         Ok(())
@@ -936,8 +952,9 @@ impl Store {
             sqlx::query(
                 "INSERT INTO step_records (\
                     run_id, node_id, seq, kind, latency_ms, \
-                    input_items, output_items, output_json, error, created_at, node_kind\
-                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                    input_items, output_items, output_json, error, created_at, node_kind, \
+                    external_calls, tokens\
+                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             )
             .bind(&ev.run_id)
             .bind(&ev.node_id)
@@ -950,6 +967,8 @@ impl Store {
             .bind(ev.error.clone())
             .bind(now_secs)
             .bind(node_kind)
+            .bind(i64::from(ev.external_calls))
+            .bind(i64::try_from(ev.tokens).unwrap_or(i64::MAX))
             .execute(&mut *tx)
             .await?;
         }
@@ -1308,6 +1327,8 @@ impl Store {
         latency_ms: u64,
         input_items: u32,
         output_items: u32,
+        external_calls: u32,
+        tokens: u64,
         output_json: Option<&str>,
         error: Option<&str>,
     ) -> Result<(), StoreError> {
@@ -1315,8 +1336,9 @@ impl Store {
         sqlx::query(
             "INSERT INTO step_records (\
                 run_id, node_id, seq, kind, latency_ms, \
-                input_items, output_items, output_json, error, created_at\
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                input_items, output_items, output_json, error, created_at, \
+                external_calls, tokens\
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
         )
         .bind(run_id)
         .bind(node_id)
@@ -1328,6 +1350,8 @@ impl Store {
         .bind(output_json)
         .bind(error)
         .bind(created_at)
+        .bind(i64::from(external_calls))
+        .bind(i64::try_from(tokens).unwrap_or(i64::MAX))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1339,6 +1363,8 @@ impl Store {
     /// # Errors
     /// [`StoreError::Sqlx`] on a read failure.
     pub async fn list_step_records(&self, run_id: &str) -> Result<Vec<StepRecord>, StoreError> {
+        // external_calls / tokens are nullable (added in v7); NULL on pre-v7
+        // rows maps to 0.
         type StepRow = (
             String,
             String,
@@ -1349,10 +1375,13 @@ impl Store {
             i64,
             Option<String>,
             Option<String>,
+            Option<i64>,
+            Option<i64>,
         );
         let rows: Vec<StepRow> = sqlx::query_as(
             "SELECT run_id, node_id, seq, kind, latency_ms, \
-                        input_items, output_items, output_json, error \
+                        input_items, output_items, output_json, error, \
+                        external_calls, tokens \
                  FROM step_records \
                  WHERE run_id = ?1 \
                  ORDER BY node_id, seq",
@@ -1363,7 +1392,7 @@ impl Store {
         Ok(rows
             .into_iter()
             .map(
-                |(rid, nid, seq, kind, lat, inp, outp, json, err)| StepRecord {
+                |(rid, nid, seq, kind, lat, inp, outp, json, err, ext, tok)| StepRecord {
                     run_id: rid,
                     node_id: nid,
                     seq: u32::try_from(seq.max(0)).unwrap_or(0),
@@ -1371,6 +1400,8 @@ impl Store {
                     latency_ms: u64::try_from(lat.max(0)).unwrap_or(0),
                     input_items: u32::try_from(inp.max(0)).unwrap_or(0),
                     output_items: u32::try_from(outp.max(0)).unwrap_or(0),
+                    external_calls: u32::try_from(ext.unwrap_or(0).max(0)).unwrap_or(0),
+                    tokens: u64::try_from(tok.unwrap_or(0).max(0)).unwrap_or(0),
                     output_json: json,
                     error: err,
                 },
@@ -1778,6 +1809,10 @@ pub struct StepRecord {
     pub input_items: u32,
     /// Output item count.
     pub output_items: u32,
+    /// Real outbound calls (HTTP/MCP/LLM) the node made; 0 for pure-logic nodes.
+    pub external_calls: u32,
+    /// LLM tokens the node consumed (input + output); 0 for non-LLM nodes.
+    pub tokens: u64,
     /// Serialized output `Vec<Item>` JSON on `Finished` steps; `None` otherwise.
     pub output_json: Option<String>,
     /// Error message on `Failed` steps; `None` otherwise.
@@ -2296,6 +2331,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn save_run_persists_external_calls_and_tokens() {
+        use a2w_engine::{RunResult, RunStatus, StepEvent, StepKind};
+        let store = Store::connect("sqlite::memory:").await.expect("connect");
+        let wf = tiny_workflow();
+        store.save_workflow(&wf).await.expect("save wf");
+
+        // A run whose http-like node reports 7 real calls and 99 tokens.
+        let run_id = "run_metrics_1".to_string();
+        let ev = |kind, ext, tok| StepEvent {
+            run_id: run_id.clone(),
+            node_id: "io".to_string(),
+            kind,
+            latency_ms: 1,
+            input_items: 1,
+            output_items: 1,
+            external_calls: ext,
+            tokens: tok,
+            error: None,
+        };
+        let result = RunResult {
+            run_id: run_id.clone(),
+            status: RunStatus::Completed,
+            node_outputs: std::collections::HashMap::new(),
+            events: vec![ev(StepKind::Started, 0, 0), ev(StepKind::Finished, 7, 99)],
+        };
+        store.save_run(&wf.id, &result).await.expect("save run");
+
+        // Read back the durable per-step rows and confirm the metrics survived.
+        let recs = store.list_step_records(&run_id).await.expect("list");
+        let fin = recs
+            .iter()
+            .find(|r| r.node_id == "io" && r.kind == "finished")
+            .expect("finished step row");
+        assert_eq!(
+            fin.external_calls, 7,
+            "external_calls persisted to step_records"
+        );
+        assert_eq!(fin.tokens, 99, "tokens persisted to step_records");
+    }
+
+    #[tokio::test]
     async fn schema_version_advances_on_first_init() {
         let store = Store::connect("sqlite::memory:").await.expect("connect");
         let v = store.current_schema_version().await.expect("read version");
@@ -2356,8 +2432,8 @@ mod tests {
         let _first = Store::connect(&path).await.expect("first connect");
         let second = Store::connect(&path).await.expect("second connect");
         let v = second.current_schema_version().await.expect("read version");
-        // Bumped to v6 with the skills table (F4).
-        assert_eq!(v, 6);
+        // Bumped to v7 with step_records.external_calls + tokens (durable metrics).
+        assert_eq!(v, 7);
 
         let _ = std::fs::remove_file(
             path.trim_start_matches("sqlite://")
