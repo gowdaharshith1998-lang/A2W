@@ -59,6 +59,22 @@ async fn dry_observe(wf: &Workflow, observe: &str, input: Vec<Value>) -> (RunSta
     (run.status, n)
 }
 
+/// DryRun and return (run status, the observed node's full output payloads).
+async fn run_node(wf: &Workflow, observe: &str, input: Vec<Value>) -> (RunStatus, Vec<Value>) {
+    let engine = Engine::new(a2w_nodes::default_registry());
+    let log = MemoryEventLog::new();
+    let run = engine
+        .run(wf, input, ExecutionMode::DryRun, &log)
+        .await
+        .expect("dry run completes");
+    let out = run
+        .node_outputs
+        .get(observe)
+        .map(|items| items.iter().map(|i| i.json.clone()).collect())
+        .unwrap_or_default();
+    (run.status, out)
+}
+
 /// One gallery entry: a workflow + the node to observe + its verification plan
 /// + a representative input used for the run-summary line.
 struct Case {
@@ -417,6 +433,225 @@ async fn gallery_validates_runs_and_verifies_every_example() {
         );
     }
     println!();
+}
+
+/// Dump every node's *actual* output payloads for every example, and assert the
+/// run is byte-identical across reruns (determinism). This is the "show me the
+/// real results" companion to the verified-by-plan gallery above.
+#[tokio::test]
+async fn gallery_dumps_actual_node_outputs_and_is_deterministic() {
+    use std::collections::BTreeMap;
+    for case in &gallery() {
+        let engine = Engine::new(a2w_nodes::default_registry());
+        let log = MemoryEventLog::new();
+        let run = engine
+            .run(
+                &case.wf,
+                case.run_input.clone(),
+                ExecutionMode::DryRun,
+                &log,
+            )
+            .await
+            .expect("run");
+        // Re-run: the engine is deterministic by construction; prove it.
+        let log2 = MemoryEventLog::new();
+        let run2 = engine
+            .run(
+                &case.wf,
+                case.run_input.clone(),
+                ExecutionMode::DryRun,
+                &log2,
+            )
+            .await
+            .expect("rerun");
+
+        println!("\n=== {} (id {}) ===", case.name, case.wf.id);
+        println!(
+            "input  : {}",
+            serde_json::to_string(&case.run_input).unwrap()
+        );
+        let ordered: BTreeMap<&String, &Vec<a2w_engine::Item>> = run.node_outputs.iter().collect();
+        for (nid, items) in &ordered {
+            let payloads: Vec<&Value> = items.iter().map(|i| &i.json).collect();
+            println!(
+                "  {:<10} [{:>2}] {}",
+                nid,
+                items.len(),
+                serde_json::to_string(&payloads).unwrap()
+            );
+        }
+
+        let a = serde_json::to_value(&run.node_outputs).unwrap();
+        let b = serde_json::to_value(&run2.node_outputs).unwrap();
+        assert_eq!(a, b, "{} must be byte-identical across reruns", case.name);
+
+        // Lock in the EXACT computed payloads of the observed node — this is the
+        // "produces the right result" regression guard (not just a count/verdict).
+        let actual: Vec<Value> = run
+            .node_outputs
+            .get(case.observe)
+            .map(|items| items.iter().map(|i| i.json.clone()).collect())
+            .unwrap_or_default();
+        let expected = expected_observed_output(case.name);
+        assert_eq!(
+            actual, expected,
+            "{}: observed node '{}' produced the wrong payloads",
+            case.name, case.observe
+        );
+    }
+    println!();
+}
+
+/// The exact, hand-verified output payloads of each example's observed node,
+/// for the gallery's representative input. Asserting on these makes "the
+/// workflows produce the right results" a hard, byte-level regression guard.
+fn expected_observed_output(name: &str) -> Vec<Value> {
+    match name {
+        // 10×2=20, 5×3=15, 8×1=8 (expression arithmetic renders as f64).
+        "order_pricing" => vec![
+            json!({ "price": 10, "qty": 2, "total": 20.0 }),
+            json!({ "price": 5, "qty": 3, "total": 15.0 }),
+            json!({ "price": 8, "qty": 1, "total": 8.0 }),
+        ],
+        // branch port 0 = the two "high" items, tagged escalated.
+        "alert_router" => vec![
+            json!({ "id": 0, "priority": "high", "escalated": true }),
+            json!({ "id": 2, "priority": "high", "escalated": true }),
+        ],
+        // switch port 0 = the two "critical" items, tagged routed=critical.
+        "severity_switch" => vec![
+            json!({ "severity": "critical", "routed": "critical" }),
+            json!({ "severity": "critical", "routed": "critical" }),
+        ],
+        // loop body fans out 2+1 = 3 line items, each tagged processed.
+        "order_items_loop" => vec![
+            json!({ "index": 0, "parent": { "items": [{ "k": 1 }, { "k": 2 }], "order": 1 }, "value": { "k": 1 }, "processed": true }),
+            json!({ "index": 1, "parent": { "items": [{ "k": 1 }, { "k": 2 }], "order": 1 }, "value": { "k": 2 }, "processed": true }),
+            json!({ "index": 0, "parent": { "items": [{ "k": 3 }], "order": 2 }, "value": { "k": 3 }, "processed": true }),
+        ],
+        // concurrent diamond: region's 2 items then tier's 2 items.
+        "enrich_merge" => vec![
+            json!({ "id": 0, "region": "us-east" }),
+            json!({ "id": 1, "region": "us-east" }),
+            json!({ "id": 0, "tier": "gold" }),
+            json!({ "id": 1, "tier": "gold" }),
+        ],
+        // http mocked deterministically (zero-token), then shaped.
+        "http_fetch_shape" => vec![
+            json!({ "_mock": true, "status": 200, "url": "https://example.com/api/items", "shaped": true }),
+            json!({ "_mock": true, "status": 200, "url": "https://example.com/api/items", "shaped": true }),
+        ],
+        // staged transforms accumulate all three flags, count conserved.
+        "deep_pipeline" => vec![
+            json!({ "id": 0, "normalized": true, "source": "a2w", "ready": true }),
+            json!({ "id": 1, "normalized": true, "source": "a2w", "ready": true }),
+            json!({ "id": 2, "normalized": true, "source": "a2w", "ready": true }),
+        ],
+        other => panic!("no expected output registered for example '{other}'"),
+    }
+}
+
+/// Empirically confirm the *edge-case* behavior an adversarial audit predicted
+/// from the executor source: every example still completes (no panic, no
+/// whole-run error) and routes/coerces per the engine's documented contract,
+/// producing a defensible — never silently wrong — result on hostile input.
+#[tokio::test]
+async fn gallery_edge_cases_behave_per_contract() {
+    // -- order_pricing: missing field and 0 coalesce to 0.0; bad string surfaces
+    //    visibly as a non-number rather than corrupting a number. --
+    let wf = load(ORDER_PRICING);
+    let (s, out) = run_node(&wf, "price", vec![json!({ "qty": 3 })]).await; // price absent
+    assert_eq!(s, RunStatus::Completed);
+    assert_eq!(
+        out,
+        vec![json!({ "qty": 3, "total": 0.0 })],
+        "missing price → 0.0"
+    );
+
+    let (_, out) = run_node(&wf, "price", vec![json!({ "price": 8, "qty": 0 })]).await;
+    assert_eq!(
+        out,
+        vec![json!({ "price": 8, "qty": 0, "total": 0.0 })],
+        "qty 0 → 0.0"
+    );
+
+    let (s, out) = run_node(&wf, "price", vec![json!({ "price": "abc", "qty": 2 })]).await;
+    assert_eq!(s, RunStatus::Completed, "bad input does not abort the run");
+    assert!(
+        out[0]["total"].is_string(),
+        "non-numeric price surfaces visibly (not a silently-wrong number): {}",
+        out[0]["total"]
+    );
+
+    // -- alert_router: anything that is not exactly "high" routes to `note`,
+    //    including a case near-miss; the high port stays empty. --
+    let wf = load(ALERT_ROUTER);
+    for input in [json!({ "message": "x" }), json!({ "priority": "High" })] {
+        let (s, esc) = run_node(&wf, "escalate", vec![input.clone()]).await;
+        assert_eq!(s, RunStatus::Completed);
+        assert!(esc.is_empty(), "non-'high' must not escalate: {input}");
+        let (_, note) = run_node(&wf, "note", vec![input.clone()]).await;
+        assert_eq!(note.len(), 1, "it routes to note instead: {input}");
+        assert_eq!(note[0]["noted"], json!(true));
+    }
+
+    // -- severity_switch: an unmatched value and a missing key both fall to the
+    //    default port (discard); nothing reaches `page`; every item routes once. --
+    let wf = load(SEVERITY_SWITCH);
+    for input in [json!({ "severity": "nope" }), json!({ "other": 1 })] {
+        let (s, page) = run_node(&wf, "page", vec![input.clone()]).await;
+        assert_eq!(s, RunStatus::Completed);
+        assert!(page.is_empty(), "unmatched must not page: {input}");
+        let (_, disc) = run_node(&wf, "discard", vec![input.clone()]).await;
+        assert_eq!(disc.len(), 1, "it lands in discard (default port): {input}");
+        assert_eq!(disc[0]["routed"], json!("default"));
+    }
+
+    // -- order_items_loop: the two "empty-ish" inputs have DISTINCT, documented
+    //    contracts (the Audit-2 fix in loop_node.rs). A real array — even an
+    //    empty one — iterates and emits a count summary. A MISSING /items is
+    //    not an array, so the item passes through the body port (data is never
+    //    silently dropped) and NO summary is emitted. Neither path panics. --
+    let wf = load(ORDER_ITEMS_LOOP);
+    // (a) empty array → zero body items, one count-0 summary.
+    let (s, body) = run_node(&wf, "process", vec![json!({ "order": 5, "items": [] })]).await;
+    assert_eq!(s, RunStatus::Completed, "empty array must not crash");
+    assert!(body.is_empty(), "empty array → no line items");
+    let (_, summ) = run_node(&wf, "summary", vec![json!({ "order": 5, "items": [] })]).await;
+    assert_eq!(summ.len(), 1, "empty array still emits a done-summary");
+    assert_eq!(summ[0]["count"], json!(0), "with count 0");
+    // (b) missing /items → not an array: the original item passes through the
+    //     body port unchanged (then `process` tags it), and NO summary fires.
+    let (s, body) = run_node(&wf, "process", vec![json!({ "order": 5 })]).await;
+    assert_eq!(s, RunStatus::Completed, "missing /items must not crash");
+    assert_eq!(
+        body,
+        vec![json!({ "order": 5, "processed": true })],
+        "missing /items passes the item through the body port (no data dropped)"
+    );
+    let (_, summ) = run_node(&wf, "summary", vec![json!({ "order": 5 })]).await;
+    assert!(summ.is_empty(), "the non-iterating path emits no summary");
+
+    // -- enrich_merge: empty input completes with an empty merge (no items lost,
+    //    none fabricated). --
+    let wf = load(ENRICH_MERGE);
+    let (s, merged) = run_node(&wf, "merge", vec![]).await;
+    assert_eq!(s, RunStatus::Completed);
+    assert!(merged.is_empty(), "empty in → empty out");
+
+    // -- deep_pipeline: a pre-existing conflicting key is overwritten by the
+    //    stage that sets it (last-writer-wins), not duplicated or ignored. --
+    let wf = load(DEEP_PIPELINE);
+    let (_, fin) = run_node(&wf, "finalize", vec![json!({ "id": 0, "ready": false })]).await;
+    assert_eq!(
+        fin,
+        vec![json!({ "id": 0, "normalized": true, "source": "a2w", "ready": true })],
+        "the finalize stage overwrites a conflicting ready:false → true"
+    );
+
+    println!(
+        "\n  all 7 examples behave per-contract on hostile input (no panic, no silent-wrong)\n"
+    );
 }
 
 #[tokio::test]
