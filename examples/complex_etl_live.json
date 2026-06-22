@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "wf_etl_live",
+  "name": "ETL (LIVE endpoints): fetch users -> validate by TLD policy -> load",
+  "nodes": [
+    { "id": "kick", "kind": "webhook_trigger", "params": {} },
+    { "id": "fetch", "kind": "http_request", "params": { "method": "GET", "url": "https://jsonplaceholder.typicode.com/users" } },
+    { "id": "expand", "kind": "loop", "params": { "over": "/body" } },
+    {
+      "id": "normalize",
+      "kind": "transform",
+      "params": { "set": {
+        "user_id": "${{ $.value.id }}",
+        "name": "${{ $.value.name }}",
+        "email_norm": "${{ lower($.value.email) }}",
+        "is_valid": "${{ contains($.value.email, '.org') || contains($.value.email, '.net') || contains($.value.email, '.io') || contains($.value.email, '.ca') || contains($.value.email, '.me') }}"
+      } }
+    },
+    { "id": "validate", "kind": "branch", "params": { "condition": { "path": "/is_valid", "op": "truthy" } } },
+    {
+      "id": "load",
+      "kind": "http_request",
+      "params": {
+        "method": "POST",
+        "url": "https://jsonplaceholder.typicode.com/posts",
+        "json": { "title": "synced user {{json.user_id}}", "body": "{{json.email_norm}}", "userId": "{{json.user_id}}" }
+      }
+    },
+    { "id": "quarantine", "kind": "transform", "params": { "set": { "quarantined": true, "reason": "untrusted_email_tld" } } },
+    { "id": "sink", "kind": "merge", "params": {} }
+  ],
+  "connections": [
+    { "from_node": "kick", "from_port": 0, "to_node": "fetch" },
+    { "from_node": "fetch", "from_port": 0, "to_node": "expand" },
+    { "from_node": "expand", "from_port": 0, "to_node": "normalize" },
+    { "from_node": "normalize", "from_port": 0, "to_node": "validate" },
+    { "from_node": "validate", "from_port": 0, "to_node": "load" },
+    { "from_node": "validate", "from_port": 1, "to_node": "quarantine" },
+    { "from_node": "load", "from_port": 0, "to_node": "sink" },
+    { "from_node": "quarantine", "from_port": 0, "to_node": "sink" }
+  ]
+}

@@ -15,6 +15,7 @@ const LEAD_ROUTING: &str = include_str!("../../../examples/complex_lead_routing.
 const ORDER_FULFILLMENT: &str = include_str!("../../../examples/complex_order_fulfillment.json");
 const ETL_SYNC: &str = include_str!("../../../examples/complex_etl_sync.json");
 const TICKET_TRIAGE: &str = include_str!("../../../examples/complex_ticket_triage.json");
+const ETL_LIVE: &str = include_str!("../../../examples/complex_etl_live.json");
 
 fn load(src: &str) -> Workflow {
     let wf = Workflow::from_json(src).expect("valid IR");
@@ -167,6 +168,27 @@ async fn complex_ticket_triage_routes_by_severity() {
     );
     // Every ticket reaches dispatch.
     assert_eq!(observe(&map, "dispatch").len(), 4);
+}
+
+/// The live-endpoint ETL (`complex_etl_live.json`) fetches from and POSTs to a
+/// real public API, so it is NOT executed in the network-free CI — but its IR
+/// must still be statically valid (and actually target the live endpoints).
+/// It is run for real, in production mode, against `jsonplaceholder.typicode.com`
+/// by the live demo; see `docs/LIVE_PRODUCTION_ETL.md`.
+#[test]
+fn complex_etl_live_is_statically_valid_real_endpoints() {
+    let wf = Workflow::from_json(ETL_LIVE).expect("valid IR");
+    let report = validate(&wf);
+    assert!(
+        report.is_valid,
+        "live ETL IR invalid: {:?}",
+        report.findings
+    );
+    assert!(
+        ETL_LIVE.contains("https://jsonplaceholder.typicode.com/users")
+            && ETL_LIVE.contains("https://jsonplaceholder.typicode.com/posts"),
+        "the live ETL must target real fetch + load endpoints"
+    );
 }
 
 /// Print every node's actual output for all four workflows — the "show me the
