@@ -20,6 +20,12 @@ a2w-optimizer = { path = "../a2w-optimizer" }
 a2w-verify = { path = "../a2w-verify" }
 a2w-skills = { path = "../a2w-skills" }
 a2w-search = { path = "../a2w-search" }
+a2w-import = { path = "../a2w-import" }
+a2w-openapi = { path = "../a2w-openapi" }
+a2w-templates = { path = "../a2w-templates" }
+a2w-author = { path = "../a2w-author" }
+a2w-llm = { path = "../a2w-llm" }
+a2w-store = { path = "../a2w-store" }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 proptest = { workspace = true }

@@ -6,12 +6,18 @@ version = 4
 name = "a2w-acceptance"
 version = "0.1.0"
 dependencies = [
+ "a2w-author",
  "a2w-engine",
+ "a2w-import",
  "a2w-ir",
+ "a2w-llm",
  "a2w-nodes",
+ "a2w-openapi",
  "a2w-optimizer",
  "a2w-search",
  "a2w-skills",
+ "a2w-store",
+ "a2w-templates",
  "a2w-testkit",
  "a2w-validator",
  "a2w-verify",
