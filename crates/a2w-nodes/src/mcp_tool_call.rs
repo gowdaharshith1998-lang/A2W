@@ -523,6 +523,8 @@ impl NodeExecutor for McpToolCall {
                 .call_tool(&server, &tool, arguments.clone())
                 .await
                 .map_err(|e| NodeError::Runtime(e.to_string()))?;
+            // A real MCP tool invocation completed — report it to the engine.
+            ctx.record_external_call();
             out.push(Item::produced(
                 serde_json::json!({ "tool": tool, "result": result }),
                 ctx.node_id.clone(),
@@ -611,6 +613,7 @@ mod tests {
             sub_workflow_depth: 0,
             workflow_id: None,
             approvals: None,
+            metrics: None,
         }
     }
 

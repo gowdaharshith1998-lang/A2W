@@ -38,6 +38,32 @@ pub enum LlmError {
     Api(String),
 }
 
+/// Token usage reported by a completion (input + output tokens).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    /// Prompt (input) tokens.
+    pub input_tokens: u64,
+    /// Generated (output) tokens.
+    pub output_tokens: u64,
+}
+
+impl Usage {
+    /// Total tokens billed (input + output).
+    #[must_use]
+    pub fn total(&self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
+}
+
+/// A completion's text plus the token usage that producing it cost.
+#[derive(Debug, Clone, Default)]
+pub struct Completion {
+    /// The assistant text.
+    pub text: String,
+    /// Token usage for this call (zero when the provider doesn't report it).
+    pub usage: Usage,
+}
+
 /// A provider-agnostic single-turn completion interface.
 ///
 /// One call maps a `system` prompt plus a `user` message to assistant text.
@@ -50,6 +76,22 @@ pub trait LlmClient: Send + Sync {
     /// # Errors
     /// Returns [`LlmError`] on configuration, transport, or API-shape failures.
     async fn complete(&self, system: &str, user: &str) -> Result<String, LlmError>;
+
+    /// Like [`complete`](LlmClient::complete) but also reports token [`Usage`].
+    ///
+    /// The default implementation calls `complete` and reports zero usage, so
+    /// clients that don't expose usage keep working unchanged. Providers that
+    /// return a usage block (e.g. Anthropic) override this to populate it.
+    ///
+    /// # Errors
+    /// Same as [`complete`](LlmClient::complete).
+    async fn complete_with_usage(&self, system: &str, user: &str) -> Result<Completion, LlmError> {
+        let text = self.complete(system, user).await?;
+        Ok(Completion {
+            text,
+            usage: Usage::default(),
+        })
+    }
 }
 
 /// Default model id used when `A2W_LLM_MODEL` is not set.
@@ -141,6 +183,10 @@ impl AnthropicClient {
 #[async_trait]
 impl LlmClient for AnthropicClient {
     async fn complete(&self, system: &str, user: &str) -> Result<String, LlmError> {
+        Ok(self.complete_with_usage(system, user).await?.text)
+    }
+
+    async fn complete_with_usage(&self, system: &str, user: &str) -> Result<Completion, LlmError> {
         // Trim any trailing slash so we don't emit `//v1/messages`.
         let endpoint = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
 
@@ -197,7 +243,22 @@ impl LlmClient for AnthropicClient {
             )));
         }
 
-        Ok(out)
+        // Anthropic returns `usage: { input_tokens, output_tokens }`.
+        let usage = parsed
+            .get("usage")
+            .map(|u| Usage {
+                input_tokens: u
+                    .get("input_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                output_tokens: u
+                    .get("output_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+            })
+            .unwrap_or_default();
+
+        Ok(Completion { text: out, usage })
     }
 }
 
@@ -252,6 +313,26 @@ impl LlmClient for MockLlm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_totals_input_plus_output() {
+        let u = Usage {
+            input_tokens: 30,
+            output_tokens: 12,
+        };
+        assert_eq!(u.total(), 42);
+        assert_eq!(Usage::default().total(), 0);
+    }
+
+    #[tokio::test]
+    async fn default_complete_with_usage_returns_text_and_zero_usage() {
+        // A client that only implements `complete` gets the default
+        // `complete_with_usage`, which returns the text with zero usage.
+        let mock = MockLlm::new(vec!["hello".to_string()]);
+        let c = mock.complete_with_usage("s", "u").await.unwrap();
+        assert_eq!(c.text, "hello");
+        assert_eq!(c.usage, Usage::default());
+    }
 
     #[tokio::test]
     async fn mock_returns_in_order_then_repeats_last() {

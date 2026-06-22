@@ -59,9 +59,66 @@ pub struct NodeContext {
     /// pending approval row and poll for a decision. `None` makes the
     /// executor return a clear "approvals not configured" error.
     pub approvals: Option<Arc<dyn ApprovalGate>>,
+    /// Per-execution metrics sink. The engine creates a fresh
+    /// [`NodeMetrics`] for each node run and reads the totals into the node's
+    /// `Finished`/`Failed` step event. Side-effecting executors report their
+    /// real outbound-call count (and an LLM call its token usage) through
+    /// [`NodeContext::record_external_call`] / [`NodeContext::record_tokens`].
+    /// `None` in unit tests that don't care about metrics.
+    pub metrics: Option<Arc<NodeMetrics>>,
+}
+
+/// A per-node-execution counter of external (HTTP/MCP/LLM) calls and LLM tokens.
+///
+/// Shared (via `Arc`) between the engine and the executor for one node run so
+/// the executor can report real side-effect activity that the engine then
+/// surfaces in the step event. Cheap, lock-free, and `Send + Sync`.
+#[derive(Debug, Default)]
+pub struct NodeMetrics {
+    external_calls: std::sync::atomic::AtomicU64,
+    tokens: std::sync::atomic::AtomicU64,
+}
+
+impl NodeMetrics {
+    /// Record one external call (one HTTP request, one MCP tool invocation, …).
+    pub fn record_call(&self) {
+        self.external_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Record `n` LLM tokens consumed (input + output).
+    pub fn record_tokens(&self, n: u64) {
+        self.tokens
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+    }
+    /// Total external calls recorded so far.
+    #[must_use]
+    pub fn calls(&self) -> u64 {
+        self.external_calls
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+    /// Total tokens recorded so far.
+    #[must_use]
+    pub fn token_count(&self) -> u64 {
+        self.tokens.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl NodeContext {
+    /// Report one external (HTTP/MCP/LLM) call to the metrics sink (no-op when
+    /// no sink is attached, e.g. in unit tests).
+    pub fn record_external_call(&self) {
+        if let Some(m) = &self.metrics {
+            m.record_call();
+        }
+    }
+
+    /// Report `n` LLM tokens consumed to the metrics sink.
+    pub fn record_tokens(&self, n: u64) {
+        if let Some(m) = &self.metrics {
+            m.record_tokens(n);
+        }
+    }
+
     /// Resolve a `credential_ref` to its secret value via the configured
     /// resolver. Returns `Ok(None)` when no resolver is configured or no such
     /// credential exists — the caller decides whether that is an error.

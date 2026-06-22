@@ -521,6 +521,7 @@ mod tests {
             sub_workflow_depth: 0,
             workflow_id: None,
             approvals: None,
+            metrics: None,
         }
     }
 

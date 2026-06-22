@@ -636,6 +636,10 @@ impl Engine {
             }
         };
 
+        // Fresh per-execution metrics sink; side-effecting executors report
+        // their real outbound-call count / token usage into it, and we read the
+        // totals into this node's Finished/Failed step event below.
+        let metrics = std::sync::Arc::new(crate::node::NodeMetrics::default());
         let ctx = NodeContext {
             run_id: run_id.to_string(),
             node_id: node.id.clone(),
@@ -647,6 +651,7 @@ impl Engine {
             sub_workflow_depth: self.initial_sub_workflow_depth,
             workflow_id: workflow_id.map(str::to_string),
             approvals: self.approvals.clone(),
+            metrics: Some(std::sync::Arc::clone(&metrics)),
         };
 
         // Started event.
@@ -703,8 +708,8 @@ impl Engine {
                     latency_ms,
                     input_items: input_count,
                     output_items: stamped.len(),
-                    external_calls: 0,
-                    tokens: 0,
+                    external_calls: u32::try_from(metrics.calls()).unwrap_or(u32::MAX),
+                    tokens: metrics.token_count(),
                     error: None,
                 });
                 NodeOutcome::Produced(stamped)
@@ -718,8 +723,9 @@ impl Engine {
                     latency_ms,
                     input_items: input_count,
                     output_items: 0,
-                    external_calls: 0,
-                    tokens: 0,
+                    // Real outbound calls / tokens spent before the failure.
+                    external_calls: u32::try_from(metrics.calls()).unwrap_or(u32::MAX),
+                    tokens: metrics.token_count(),
                     error: Some(msg.clone()),
                 });
                 self.apply_error_policy(node, msg)
@@ -727,11 +733,11 @@ impl Engine {
         }
     }
 
-    /// Drive a single node with optional retry. Each retry attempt records a
-    /// `Started` event with the attempt index encoded into `external_calls` so
-    /// observability can see the retry behaviour without a schema change. The
-    /// final outcome is returned to the caller, which then emits the
-    /// authoritative `Finished` / `Failed` event for the whole step.
+    /// Drive a single node with optional retry. Each failed attempt records a
+    /// `Failed` event carrying the attempt index in its error message so
+    /// observability can see the retry behaviour. The final outcome is returned
+    /// to the caller, which then emits the authoritative `Finished` / `Failed`
+    /// event for the whole step (with the node's real external-call/token totals).
     ///
     /// In `DryRun` mode retries are **not applied** (mocking is deterministic
     /// and the retry semantics are about real network/IO transients).
@@ -771,6 +777,9 @@ impl Engine {
                 Err(err) => {
                     // Record a Failed-attempt event so a retried run is visible
                     // in the event stream even when the final outcome succeeds.
+                    // The attempt index lives in the error message (not in
+                    // `external_calls`, which is reserved for the node's real
+                    // outbound-call count, reported by the final step event).
                     log.record(StepEvent {
                         run_id: run_id.to_string(),
                         node_id: node_id.to_string(),
@@ -778,7 +787,7 @@ impl Engine {
                         latency_ms: 0,
                         input_items: input_count,
                         output_items: 0,
-                        external_calls: attempt,
+                        external_calls: 0,
                         tokens: 0,
                         error: Some(format!("attempt {attempt}/{max_attempts}: {err}")),
                     });
@@ -1064,6 +1073,76 @@ mod retry_tests {
         // ...and produced no output, while the reachable node did.
         assert!(!result.node_outputs.contains_key("ghost"));
         assert!(result.node_outputs.contains_key("keep"));
+    }
+
+    /// An executor that reports external calls + tokens through the metrics
+    /// sink, the way http/llm/mcp nodes do for real.
+    struct MetricReporter;
+    #[async_trait]
+    impl NodeExecutor for MetricReporter {
+        fn has_side_effects(&self) -> bool {
+            true
+        }
+        async fn execute(
+            &self,
+            ctx: &NodeContext,
+            input: Vec<Item>,
+        ) -> Result<Vec<Item>, NodeError> {
+            // Pretend we made 3 outbound calls that cost 42 tokens.
+            ctx.record_external_call();
+            ctx.record_external_call();
+            ctx.record_external_call();
+            ctx.record_tokens(42);
+            Ok(input)
+        }
+    }
+
+    #[tokio::test]
+    async fn step_event_reports_external_calls_and_tokens() {
+        let registry = NodeRegistry::new()
+            .with(
+                NodeKind::WebhookTrigger,
+                Arc::new(super::__tests::PassThrough),
+            )
+            .with(NodeKind::HttpRequest, Arc::new(MetricReporter));
+        let wf = Workflow {
+            schema_version: SCHEMA_VERSION,
+            id: "wf_metrics".into(),
+            name: "metrics".into(),
+            nodes: vec![
+                Node::new("trigger", NodeKind::WebhookTrigger),
+                Node {
+                    id: "call".into(),
+                    kind: NodeKind::HttpRequest,
+                    params: serde_json::json!({ "url": "https://example.invalid/x" }),
+                    retry: None,
+                    on_error: None,
+                },
+            ],
+            connections: vec![Connection::new("trigger", 0, "call")],
+        };
+        let engine = Engine::new(registry);
+        let log = MemoryEventLog::new();
+        let result = engine
+            .run(&wf, vec![serde_json::json!({})], ExecutionMode::Run, &log)
+            .await
+            .expect("run completes");
+        // The node's Finished event carries the reported external_calls + tokens.
+        let ev = result
+            .events
+            .iter()
+            .find(|e| e.node_id == "call" && e.kind == StepKind::Finished)
+            .expect("a Finished event for the call node");
+        assert_eq!(ev.external_calls, 3, "real outbound-call count reported");
+        assert_eq!(ev.tokens, 42, "token usage reported");
+        // The trigger (no external work) stays at zero.
+        let trig = result
+            .events
+            .iter()
+            .find(|e| e.node_id == "trigger" && e.kind == StepKind::Finished)
+            .unwrap();
+        assert_eq!(trig.external_calls, 0);
+        assert_eq!(trig.tokens, 0);
     }
 
     #[tokio::test]

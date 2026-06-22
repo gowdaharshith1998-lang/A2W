@@ -124,12 +124,20 @@ impl NodeExecutor for LlmCall {
         let mut out = Vec::with_capacity(input.len());
         for item in &input {
             let prompt = template::render(&spec.prompt, &item.json);
-            let reply = client
-                .complete(system, &prompt)
+            let completion = client
+                .complete_with_usage(system, &prompt)
                 .await
                 .map_err(|e| NodeError::Runtime(format!("LlmCall transport failed: {e}")))?;
+            // Report the real outbound call and the tokens it consumed so the
+            // engine surfaces them in this node's step event.
+            ctx.record_external_call();
+            ctx.record_tokens(completion.usage.total());
             out.push(Item::produced(
-                serde_json::json!({ "text": reply }),
+                serde_json::json!({
+                    "text": completion.text,
+                    "input_tokens": completion.usage.input_tokens,
+                    "output_tokens": completion.usage.output_tokens,
+                }),
                 ctx.node_id.clone(),
                 0,
             ));
@@ -177,6 +185,7 @@ mod tests {
             sub_workflow_depth: 0,
             workflow_id: None,
             approvals: None,
+            metrics: None,
         }
     }
 

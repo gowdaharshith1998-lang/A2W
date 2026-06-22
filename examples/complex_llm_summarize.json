@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "wf_llm_summarize",
+  "name": "LLM summarizer (consumes real tokens in production)",
+  "nodes": [
+    { "id": "intake", "kind": "webhook_trigger", "params": {} },
+    { "id": "summarize", "kind": "llm_call", "params": { "prompt": "Summarize this support ticket in one line: {{json.text}}" } },
+    { "id": "tag", "kind": "transform", "params": { "set": { "triaged": true } } }
+  ],
+  "connections": [
+    { "from_node": "intake", "from_port": 0, "to_node": "summarize" },
+    { "from_node": "summarize", "from_port": 0, "to_node": "tag" }
+  ]
+}

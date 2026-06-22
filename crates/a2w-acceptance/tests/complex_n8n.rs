@@ -16,6 +16,7 @@ const ORDER_FULFILLMENT: &str = include_str!("../../../examples/complex_order_fu
 const ETL_SYNC: &str = include_str!("../../../examples/complex_etl_sync.json");
 const TICKET_TRIAGE: &str = include_str!("../../../examples/complex_ticket_triage.json");
 const ETL_LIVE: &str = include_str!("../../../examples/complex_etl_live.json");
+const LLM_SUMMARIZE: &str = include_str!("../../../examples/complex_llm_summarize.json");
 
 fn load(src: &str) -> Workflow {
     let wf = Workflow::from_json(src).expect("valid IR");
@@ -189,6 +190,16 @@ fn complex_etl_live_is_statically_valid_real_endpoints() {
             && ETL_LIVE.contains("https://jsonplaceholder.typicode.com/posts"),
         "the live ETL must target real fetch + load endpoints"
     );
+}
+
+/// The LLM summarizer calls a real model in production (consuming tokens), so it
+/// is not executed in CI — but its IR must be statically valid. It is run live
+/// against an LLM endpoint by the token demo; see `docs/LIVE_PRODUCTION_ETL.md`.
+#[test]
+fn complex_llm_summarize_is_statically_valid() {
+    let wf = Workflow::from_json(LLM_SUMMARIZE).expect("valid IR");
+    assert!(validate(&wf).is_valid, "llm summarize IR invalid");
+    assert!(wf.nodes.iter().any(|n| n.kind == a2w_ir::NodeKind::LlmCall));
 }
 
 /// Print every node's actual output for all four workflows — the "show me the

@@ -698,6 +698,8 @@ impl NodeExecutor for HttpRequest {
                 .send()
                 .await
                 .map_err(|e| NodeError::Http(e.to_string()))?;
+            // A real outbound HTTP call completed — report it to the engine.
+            ctx.record_external_call();
             let status = resp.status().as_u16();
 
             // Pre-check Content-Length when present so cooperative servers are

@@ -261,6 +261,7 @@ mod tests {
             sub_workflow_depth: depth,
             workflow_id: None,
             approvals: None,
+            metrics: None,
         }
     }
 

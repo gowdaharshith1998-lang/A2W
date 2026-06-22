@@ -30,5 +30,5 @@ pub use event::{EventLog, MemoryEventLog, StepEvent, StepKind};
 pub use item::{Item, ItemSource};
 pub use node::{
     ApprovalGate, ApprovalOutcome, CredentialError, CredentialResolver, ExecutionMode, NodeContext,
-    NodeError, NodeExecutor, SubWorkflowResolver,
+    NodeError, NodeExecutor, NodeMetrics, SubWorkflowResolver,
 };
