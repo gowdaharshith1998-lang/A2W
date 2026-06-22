@@ -196,16 +196,19 @@ pub fn apply(wf: &Workflow, ops: &[IrOp]) -> Workflow {
     out
 }
 
-/// Whether a node's params reference its input data via the `{{json` token
-/// convention (`{{json}}` or `{{json.FIELD}}`). A node whose params contain no
-/// such token does not consume its predecessor's output, so it can be
-/// parallelized with that predecessor.
+/// Whether a node's params reference its input data via either templating
+/// mechanism a2w-nodes supports: the legacy `{{json...}}` token convention
+/// **or** the `${{ ... }}` expression DSL (e.g. `${{ $.field }}`). A node whose
+/// params contain neither does not consume its predecessor's output, so it can
+/// be parallelized with that predecessor.
+///
+/// **Accuracy fix**: checking only `{{json` missed `${{ $.x }}` consumers and
+/// could suggest parallelizing a data-dependent node — yielding wrong,
+/// order-dependent output. Detecting `${{` too is strictly more conservative.
 #[must_use]
 pub fn params_consume_input(params: &serde_json::Value) -> bool {
-    // Serialize the whole params blob and look for the token marker. This
-    // matches the interim templating convention used by a2w-nodes.
     serde_json::to_string(params)
-        .map(|s| s.contains("{{json"))
+        .map(|s| s.contains("{{json") || s.contains("${{"))
         .unwrap_or(false)
 }
 
@@ -236,4 +239,28 @@ fn edge_port(wf: &Workflow, from: &str, to: &str) -> usize {
         .find(|c| c.from_node == from && c.to_node == to)
         .map(|c| c.from_port)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod consume_tests {
+    use super::params_consume_input;
+    use serde_json::json;
+
+    #[test]
+    fn detects_both_templating_mechanisms() {
+        // Legacy {{json}} convention.
+        assert!(params_consume_input(
+            &json!({ "url": "https://x/{{json.id}}" })
+        ));
+        // ${{ }} expression DSL — previously a FALSE NEGATIVE that could lead to
+        // an unsafe Parallelize suggestion for a data-dependent node.
+        assert!(params_consume_input(
+            &json!({ "set": { "total": "${{ $.price * $.qty }}" } })
+        ));
+        // A node that references no input is parallelizable.
+        assert!(!params_consume_input(
+            &json!({ "set": { "stamped": true, "kind": "constant" } })
+        ));
+        assert!(!params_consume_input(&json!({})));
+    }
 }

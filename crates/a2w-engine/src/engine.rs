@@ -406,6 +406,53 @@ impl Engine {
             }
         }
 
+        // Reachability guard: execute ONLY nodes reachable from the trigger.
+        // An unreachable ("orphan") node would otherwise be scheduled and, when
+        // it has no incoming edges, fire its executor with empty input — a real
+        // side effect in Run mode for a node the author never wired into the
+        // graph. We BFS the trigger-reachable set and mark every other node as
+        // already-done (recording a skip event for observability) so only the
+        // reachable graph runs. The validator already warns about unreachable
+        // nodes; this makes the engine honor that rather than silently run them.
+        let reachable: HashSet<&str> = {
+            let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
+            for conn in &wf.connections {
+                adj.entry(conn.from_node.as_str())
+                    .or_default()
+                    .push(conn.to_node.as_str());
+            }
+            let mut seen: HashSet<&str> = HashSet::new();
+            let mut stack: Vec<&str> = vec![trigger_id];
+            seen.insert(trigger_id);
+            while let Some(cur) = stack.pop() {
+                if let Some(neigh) = adj.get(cur) {
+                    for &next in neigh {
+                        if seen.insert(next) {
+                            stack.push(next);
+                        }
+                    }
+                }
+            }
+            seen
+        };
+        for node in &wf.nodes {
+            if !reachable.contains(node.id.as_str()) && !done.contains(node.id.as_str()) {
+                done.insert(node.id.as_str());
+                remaining = remaining.saturating_sub(1);
+                log.record(StepEvent {
+                    run_id: run_id.clone(),
+                    node_id: node.id.clone(),
+                    kind: StepKind::Finished,
+                    latency_ms: 0,
+                    input_items: 0,
+                    output_items: 0,
+                    external_calls: 0,
+                    tokens: 0,
+                    error: Some("skipped: unreachable from trigger".to_string()),
+                });
+            }
+        }
+
         // Loop: each pass runs ALL currently-runnable nodes concurrently.
         while remaining > 0 {
             // A node is runnable iff it is not done and every incoming producer
@@ -940,6 +987,83 @@ mod retry_tests {
         assert!(matches!(err, EngineError::NodeFailed { .. }), "got {err:?}");
         // We expect the executor to have been called exactly 2 times.
         assert_eq!(flaky.attempts.load(Ordering::SeqCst), 2);
+    }
+
+    /// An executor that records how many times it was invoked.
+    struct CountingSideEffect {
+        calls: Arc<AtomicU32>,
+    }
+    #[async_trait]
+    impl NodeExecutor for CountingSideEffect {
+        fn has_side_effects(&self) -> bool {
+            true
+        }
+        async fn execute(
+            &self,
+            _ctx: &NodeContext,
+            input: Vec<Item>,
+        ) -> Result<Vec<Item>, NodeError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(input)
+        }
+    }
+
+    #[tokio::test]
+    async fn unreachable_orphan_node_does_not_execute() {
+        // A side-effecting node with no incoming connection is unreachable from
+        // the trigger. It must NOT fire its executor (which in Run mode would be
+        // a real, unintended side effect) — the engine runs only the
+        // trigger-reachable graph.
+        let calls = Arc::new(AtomicU32::new(0));
+        let ghost = Arc::new(CountingSideEffect {
+            calls: calls.clone(),
+        });
+        let registry = NodeRegistry::new()
+            .with(
+                NodeKind::WebhookTrigger,
+                Arc::new(super::__tests::PassThrough),
+            )
+            .with(NodeKind::Transform, Arc::new(super::__tests::PassThrough))
+            .with(NodeKind::HttpRequest, ghost);
+        let wf = Workflow {
+            schema_version: SCHEMA_VERSION,
+            id: "wf_orphan".into(),
+            name: "Orphan".into(),
+            nodes: vec![
+                Node::new("trigger", NodeKind::WebhookTrigger),
+                Node::new("keep", NodeKind::Transform),
+                Node {
+                    id: "ghost".into(),
+                    kind: NodeKind::HttpRequest,
+                    params: serde_json::json!({ "url": "https://example.invalid/should-not-fire" }),
+                    retry: None,
+                    on_error: None,
+                },
+            ],
+            // Note: "ghost" is intentionally NOT wired in.
+            connections: vec![Connection::new("trigger", 0, "keep")],
+        };
+        let engine = Engine::new(registry);
+        let log = MemoryEventLog::new();
+        let result = engine
+            .run(
+                &wf,
+                vec![serde_json::json!({ "x": 1 })],
+                ExecutionMode::Run,
+                &log,
+            )
+            .await
+            .expect("run completes");
+        assert_eq!(result.status, RunStatus::Completed);
+        // The orphan side-effecting node never ran...
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "unreachable node must not fire its executor"
+        );
+        // ...and produced no output, while the reachable node did.
+        assert!(!result.node_outputs.contains_key("ghost"));
+        assert!(result.node_outputs.contains_key("keep"));
     }
 
     #[tokio::test]

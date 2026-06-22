@@ -54,7 +54,7 @@ impl NodeExecutor for Transform {
                     // even when `set` would overwrite that key.
                     let snapshot = serde_json::Value::Object(obj.clone());
                     for (k, v) in set {
-                        let evaluated = render_value(v, &snapshot);
+                        let evaluated = render_value(v, &snapshot)?;
                         obj.insert(k.clone(), evaluated);
                     }
                     serde_json::Value::Object(obj)
@@ -82,7 +82,10 @@ impl NodeExecutor for Transform {
 /// author's literal string output like `"[1,2,3]"` isn't silently mutated
 /// into a 3-element array. Mixed strings (`"prefix${{ expr }}suffix"`) always
 /// produce a string result.
-fn render_value(v: &serde_json::Value, item: &serde_json::Value) -> serde_json::Value {
+fn render_value(
+    v: &serde_json::Value,
+    item: &serde_json::Value,
+) -> Result<serde_json::Value, NodeError> {
     match v {
         serde_json::Value::String(s) if s.contains("${{") => {
             let trimmed = s.trim();
@@ -93,32 +96,45 @@ fn render_value(v: &serde_json::Value, item: &serde_json::Value) -> serde_json::
                 // the only content outside the markers.
                 && trimmed.matches("${{").count() == 1
                 && trimmed.matches("}}").count() == 1;
-            let rendered = a2w_expr::render(s, item);
             if is_whole_expr {
-                // Try parsing the rendered output as JSON. Only substitute
-                // the native value when parsing succeeds AND yields a non-
-                // string value (so a string-returning expression still
-                // produces a string, never accidentally re-interpreted).
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(rendered.trim()) {
-                    if !matches!(parsed, serde_json::Value::String(_)) {
-                        return parsed;
-                    }
-                }
+                // **R3/accuracy fix**: a whole-value expression intends a typed
+                // result. Evaluate it directly and use the returned Value AS-IS:
+                //   * a string-typed result stays a string (no silent re-parse
+                //     of `"[1,2,3]"` into an array), and
+                //   * an eval ERROR (e.g. coercing `"abc"` to a number, or
+                //     `1/0`) is surfaced as a NodeError so the engine's
+                //     on_error / retry policy governs it — instead of writing a
+                //     poison `"${{!...!}}"` marker into the field and reporting
+                //     the run as "completed".
+                let inner = &trimmed[3..trimmed.len() - 2];
+                return a2w_expr::eval_str(inner.trim(), item).map_err(|e| {
+                    NodeError::Runtime(format!(
+                        "transform expression `{}` failed: {e}",
+                        inner.trim()
+                    ))
+                });
             }
-            serde_json::Value::String(rendered)
+            // Mixed string (literal text + one or more expressions): interpolate
+            // leniently, keeping the visible marker on a per-segment error so
+            // the surrounding literal text is preserved.
+            Ok(serde_json::Value::String(a2w_expr::render(s, item)))
         }
-        serde_json::Value::String(_) => v.clone(),
+        serde_json::Value::String(_) => Ok(v.clone()),
         serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(|x| render_value(x, item)).collect())
+            let mut out = Vec::with_capacity(arr.len());
+            for x in arr {
+                out.push(render_value(x, item)?);
+            }
+            Ok(serde_json::Value::Array(out))
         }
         serde_json::Value::Object(obj) => {
             let mut out = serde_json::Map::with_capacity(obj.len());
             for (k, val) in obj {
-                out.insert(k.clone(), render_value(val, item));
+                out.insert(k.clone(), render_value(val, item)?);
             }
-            serde_json::Value::Object(out)
+            Ok(serde_json::Value::Object(out))
         }
-        _ => v.clone(),
+        _ => Ok(v.clone()),
     }
 }
 

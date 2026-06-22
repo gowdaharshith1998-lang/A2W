@@ -575,12 +575,37 @@ async fn gallery_edge_cases_behave_per_contract() {
         "qty 0 → 0.0"
     );
 
-    let (s, out) = run_node(&wf, "price", vec![json!({ "price": "abc", "qty": 2 })]).await;
-    assert_eq!(s, RunStatus::Completed, "bad input does not abort the run");
+    // A non-numeric price now FAILS LOUDLY (strict whole-expression eval)
+    // instead of silently poisoning `total` with a "${{!...!}}" marker string.
+    // Under the default Stop policy the engine aborts the run rather than
+    // reporting a bogus "completed".
+    let bad = vec![json!({ "price": "abc", "qty": 2 })];
+    let engine = Engine::new(a2w_nodes::default_registry());
+    let log = MemoryEventLog::new();
+    let res = engine
+        .run(&wf, bad.clone(), ExecutionMode::DryRun, &log)
+        .await;
     assert!(
-        out[0]["total"].is_string(),
-        "non-numeric price surfaces visibly (not a silently-wrong number): {}",
-        out[0]["total"]
+        res.is_err(),
+        "a non-numeric price aborts the run (strict eval), not a poisoned total: {res:?}"
+    );
+    // ...and with on_error: Continue the failure is *contained* by policy: the
+    // price node yields zero items and the run completes.
+    let mut lenient = wf.clone();
+    for n in &mut lenient.nodes {
+        if n.id == "price" {
+            n.on_error = Some(a2w_ir::ErrorPolicy::Continue);
+        }
+    }
+    let (s, out) = run_node(&lenient, "price", bad).await;
+    assert_eq!(
+        s,
+        RunStatus::Completed,
+        "on_error:Continue contains the failure"
+    );
+    assert!(
+        out.is_empty(),
+        "the failed node produced zero items under Continue"
     );
 
     // -- alert_router: anything that is not exactly "high" routes to `note`,

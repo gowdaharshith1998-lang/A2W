@@ -485,6 +485,49 @@ async fn semantic_relation_catches_wrong_field_engine_invariants_cannot() {
     );
 }
 
+/// A degenerate FieldScaling (factor 1, factor 0, or a zero base sum) passes
+/// for ANY workflow, so it must be reported as a FAIL — never counted as
+/// outcome evidence. Without the guard, factor 1.0 would vacuously "pass".
+#[tokio::test]
+async fn degenerate_field_scaling_is_not_a_vacuous_pass() {
+    let mut total = Node::new("total", NodeKind::Transform);
+    total.params = json!({ "set": { "total": "${{ $.price * $.qty }}" } });
+    let workflow = wf(
+        "wf_degenerate_scaling",
+        vec![trigger(), total],
+        vec![Connection::new("trigger", 0, "total")],
+    );
+    let base_input: Vec<Value> = vec![
+        json!({ "price": 10, "qty": 2 }),
+        json!({ "price": 5, "qty": 4 }),
+    ];
+    let harness = VerificationHarness::new();
+
+    for bad_factor in [1.0, 0.0] {
+        let plan = VerificationPlan::new("total").with_semantic(SemanticSuite::new(vec![
+            SemanticRelation::FieldScaling {
+                in_field: "/price".to_string(),
+                out_field: "/total".to_string(),
+                factor: bad_factor,
+                base_input: base_input.clone(),
+            },
+        ]));
+        let report = verify(&harness, &workflow, &plan).await.expect("verify");
+        assert_eq!(
+            report.passed_in(CheckCategory::SemanticRelation),
+            0,
+            "factor {bad_factor} must NOT vacuously pass:\n{}",
+            report.summary()
+        );
+        assert_eq!(
+            report.score(),
+            0.0,
+            "a degenerate relation provides no outcome evidence:\n{}",
+            report.summary()
+        );
+    }
+}
+
 #[tokio::test]
 async fn unknown_observe_node_errors() {
     let harness = VerificationHarness::new();

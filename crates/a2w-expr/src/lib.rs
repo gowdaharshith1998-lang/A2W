@@ -252,13 +252,21 @@ impl<'a> Lexer<'a> {
             }
             b'"' | b'\'' => {
                 let quote = self.advance().unwrap();
-                let mut s = String::new();
+                // Accumulate raw bytes and decode as UTF-8 at the end so a
+                // multi-byte sequence inside the literal (e.g. "café", "你好",
+                // emoji) is preserved instead of being split into spurious
+                // Latin-1 chars by a per-byte `as char` cast.
+                let mut buf: Vec<u8> = Vec::new();
                 while let Some(b) = self.peek() {
                     if b == quote {
                         self.advance();
+                        let s = String::from_utf8(buf).map_err(|_| ExprError::Parse {
+                            offset: start,
+                            message: "string literal is not valid UTF-8".into(),
+                        })?;
                         return Ok(Some((Token::Str(s), start)));
                     }
-                    if s.len() >= MAX_STRING_LITERAL_BYTES {
+                    if buf.len() >= MAX_STRING_LITERAL_BYTES {
                         return Err(ExprError::Parse {
                             offset: start,
                             message: format!(
@@ -269,12 +277,12 @@ impl<'a> Lexer<'a> {
                     if b == b'\\' {
                         self.advance();
                         match self.advance() {
-                            Some(b'n') => s.push('\n'),
-                            Some(b't') => s.push('\t'),
-                            Some(b'\\') => s.push('\\'),
-                            Some(b'"') => s.push('"'),
-                            Some(b'\'') => s.push('\''),
-                            Some(other) => s.push(other as char),
+                            Some(b'n') => buf.push(b'\n'),
+                            Some(b't') => buf.push(b'\t'),
+                            Some(b'\\') => buf.push(b'\\'),
+                            Some(b'"') => buf.push(b'"'),
+                            Some(b'\'') => buf.push(b'\''),
+                            Some(other) => buf.push(other),
                             None => {
                                 return Err(ExprError::Parse {
                                     offset: self.pos,
@@ -283,7 +291,7 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     } else {
-                        s.push(self.advance().unwrap() as char);
+                        buf.push(self.advance().unwrap());
                     }
                 }
                 Err(ExprError::Parse {
@@ -648,6 +656,21 @@ impl Parser {
                     self.consume();
                     match self.consume() {
                         Some(Token::Number(n)) => {
+                            // Reject a non-integral / negative / out-of-range
+                            // index at parse time rather than silently
+                            // truncating via `as usize` (e.g. `a[2.9]` -> 2).
+                            if !n.is_finite()
+                                || n.fract() != 0.0
+                                || n < 0.0
+                                || n > usize::MAX as f64
+                            {
+                                return Err(ExprError::Parse {
+                                    offset: self.offset(),
+                                    message: format!(
+                                        "array index must be a non-negative integer, got {n}"
+                                    ),
+                                });
+                            }
                             let i = n as usize;
                             steps.push(PathStep::Index(i));
                         }
@@ -714,10 +737,20 @@ fn as_number(v: &Value) -> Result<f64, ExprError> {
             .ok_or_else(|| ExprError::Eval(format!("number '{n}' is not f64-representable"))),
         Value::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
         Value::Null => Ok(0.0),
-        Value::String(s) => s
-            .trim()
-            .parse::<f64>()
-            .map_err(|_| ExprError::Eval(format!("cannot coerce string '{s}' to number"))),
+        Value::String(s) => {
+            let f = s
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| ExprError::Eval(format!("cannot coerce string '{s}' to number")))?;
+            // Mirror the numeric-literal guard: a coerced string must not
+            // smuggle a non-finite value (e.g. "inf", "NaN") into arithmetic.
+            if !f.is_finite() {
+                return Err(ExprError::Eval(format!(
+                    "cannot coerce non-finite string '{s}' to number"
+                )));
+            }
+            Ok(f)
+        }
         _ => Err(ExprError::Eval(format!("cannot coerce {v} to number"))),
     }
 }
@@ -990,6 +1023,49 @@ mod tests {
         assert_eq!(eval_str("$.address.city", &v).unwrap(), json!("NYC"));
         assert_eq!(eval_str("$.tags[0]", &v).unwrap(), json!("admin"));
         assert_eq!(eval_str("$.missing", &v).unwrap(), json!(null));
+    }
+
+    // --- accuracy fixes ---
+
+    #[test]
+    fn string_literal_preserves_utf8() {
+        // Multi-byte UTF-8 inside a literal must survive lexing intact, not be
+        // shredded into Latin-1 chars.
+        assert_eq!(eval_str("\"café\"", &Value::Null).unwrap(), json!("café"));
+        assert_eq!(eval_str("\"你好\"", &Value::Null).unwrap(), json!("你好"));
+        assert_eq!(eval_str("\"a🚀b\"", &Value::Null).unwrap(), json!("a🚀b"));
+        // length() now counts real chars (4), not bytes (5).
+        assert_eq!(
+            eval_str("length(\"café\")", &Value::Null).unwrap(),
+            json!(4)
+        );
+        // Concatenation with a multi-byte field round-trips.
+        let v = json!({ "name": "naïve" });
+        assert_eq!(eval_str("\"hi \" + $.name", &v).unwrap(), json!("hi naïve"));
+    }
+
+    #[test]
+    fn array_index_must_be_a_non_negative_integer() {
+        let v = json!({ "a": [10, 20, 30] });
+        assert_eq!(eval_str("$.a[1]", &v).unwrap(), json!(20));
+        // A fractional index used to truncate to 2; now it is a parse error.
+        assert!(
+            eval_str("$.a[2.9]", &v).is_err(),
+            "fractional index rejected"
+        );
+        assert!(eval_str("$.a[-1]", &v).is_err(), "negative index rejected");
+    }
+
+    #[test]
+    fn non_finite_string_coercion_is_rejected() {
+        // A numeric literal can't be inf/NaN; a coerced string must not be able
+        // to smuggle one into arithmetic either.
+        // Use `*` (always numeric) — `+` with a string operand would concat.
+        let v = json!({ "x": "inf", "y": "NaN", "z": "3.5" });
+        assert!(eval_str("$.x * 1", &v).is_err(), "'inf' must not coerce");
+        assert!(eval_str("$.y * 1", &v).is_err(), "'NaN' must not coerce");
+        // A finite numeric string still coerces fine.
+        assert_eq!(eval_str("$.z * 1", &v).unwrap(), json!(3.5));
     }
 
     #[test]

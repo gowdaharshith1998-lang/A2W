@@ -174,9 +174,27 @@ impl SemanticRelation {
 
         let base_sum = sum_field(&base_out, out_field);
         let scaled_sum = sum_field(&scaled_out, out_field);
+        let name = self.name();
+
+        // Calibration guard: a degenerate configuration makes this relation pass
+        // for ANY workflow, so it is NOT outcome evidence. factor 0 gives 0==0;
+        // factor 1 leaves the input unchanged (scaled_sum==base_sum trivially);
+        // a zero base sum makes the expectation 0 no matter how `out_field` is
+        // computed. Fail rather than vacuously pass, so such a relation can
+        // never be counted toward an outcome-correctness claim.
+        if !factor.is_finite() || factor == 0.0 || factor == 1.0 || base_sum.abs() < 1e-9 {
+            return Ok(CheckResult::fail(
+                CheckCategory::SemanticRelation,
+                name,
+                format!(
+                    "inconclusive FieldScaling: degenerate config (factor {factor}, Σbase \
+                     {base_sum}) proves nothing — use factor ∉ {{0,1}} and a non-zero base sum"
+                ),
+            ));
+        }
+
         let expected = base_sum * factor;
         let ok = approx_eq(scaled_sum, expected);
-        let name = self.name();
         Ok(if ok {
             CheckResult::pass(
                 CheckCategory::SemanticRelation,

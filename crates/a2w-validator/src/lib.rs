@@ -75,6 +75,28 @@ use petgraph::graph::{DiGraph, NodeIndex};
 pub fn validate(wf: &Workflow) -> ValidationReport {
     let mut findings: Vec<Finding> = Vec::new();
 
+    // --- Check 0: schema version ------------------------------------------
+    // Reject a workflow authored against a different IR schema before any
+    // structural analysis — its node/param shapes may not match this build's
+    // assumptions. This enforces the version-gating the crate documents.
+    if wf.schema_version != a2w_ir::SCHEMA_VERSION {
+        findings.push(Finding {
+            severity: Severity::Error,
+            code: FindingCode::UnsupportedSchemaVersion,
+            message: format!(
+                "workflow schema_version {} is not supported by this build (expected {})",
+                wf.schema_version,
+                a2w_ir::SCHEMA_VERSION
+            ),
+            location: Location::Workflow,
+            suggestion: Some(format!(
+                "re-author or migrate the workflow to schema_version {}",
+                a2w_ir::SCHEMA_VERSION
+            )),
+        });
+        return ValidationReport::from_findings(findings);
+    }
+
     // --- Check 1: empty workflow ------------------------------------------
     if wf.nodes.is_empty() {
         findings.push(Finding {
@@ -724,6 +746,18 @@ mod tests {
             .iter()
             .find(|f| f.code == code)
             .unwrap_or_else(|| panic!("expected a finding with code {code:?}"))
+    }
+
+    #[test]
+    fn unsupported_schema_version_is_rejected() {
+        let mut bad = a2w_ir::sample_workflow();
+        bad.schema_version = SCHEMA_VERSION + 1;
+        let report = validate(&bad);
+        assert!(!report.is_valid, "a future schema_version must be rejected");
+        assert!(codes(&report).contains(&FindingCode::UnsupportedSchemaVersion));
+        // The current version still validates clean.
+        bad.schema_version = SCHEMA_VERSION;
+        assert!(validate(&bad).is_valid);
     }
 
     #[test]

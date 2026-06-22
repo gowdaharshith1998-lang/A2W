@@ -23,6 +23,11 @@ pub enum Severity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingCode {
+    /// The workflow's `schema_version` is not the one this build understands
+    /// (`a2w_ir::SCHEMA_VERSION`). The crate documents version-gating; this
+    /// finding makes the gate real instead of a claim the validator never
+    /// enforced.
+    UnsupportedSchemaVersion,
     /// Workflow has no nodes at all.
     EmptyWorkflow,
     /// Two or more nodes share the same `id`.
