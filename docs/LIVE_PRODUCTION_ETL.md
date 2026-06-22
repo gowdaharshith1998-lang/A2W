@@ -59,10 +59,33 @@ This is genuine production execution: the `fetch` and `load` nodes made real
 network calls to a live public API (proven by the 200/201 status codes, the
 real 10-user dataset, the created-resource ids, and the multi-second write
 latency), the routing was independently verified correct against the source, and
-the run consumed **zero LLM tokens** and was deterministic/repeatable. The only
-caveat: the per-event `external_calls` counter is left at 0 by the server (a
-known observability gap), so real network activity is evidenced by latency +
-status codes rather than that field.
+the run was deterministic/repeatable.
+
+## Metrics: `external_calls` and LLM `tokens` (now reported)
+
+Each node's step event now carries its **real outbound-call count** and **LLM
+token usage** (previously left at 0). Re-running the ETL in production and an LLM
+summarizer (against an Anthropic-compatible endpoint), confirmed live by agents:
+
+| Run | Node | `external_calls` | `tokens` |
+|---|---|---|---|
+| ETL | `fetch` (GET /users) | **1** | 0 |
+| ETL | `load` (5× POST /posts) | **5** | 0 |
+| ETL | pure-logic nodes | 0 | 0 |
+| ETL | **run total** | **6** | 0 |
+| LLM | `summarize` (2 tickets) | **2** | **100** (49 + 51 per ticket) |
+| LLM | non-LLM nodes | 0 | **0** |
+
+`external_calls` = one per real HTTP request (http/mcp) and one per LLM call;
+`tokens` = input + output tokens summed from the provider's `usage` block, which
+the `llm_call` node also surfaces per item as `input_tokens` / `output_tokens`.
+
+> The LLM token demo uses a local Anthropic-API-compatible endpoint because no
+> `ANTHROPIC_API_KEY` is configured; pointing `A2W_LLM_BASE_URL` at the real
+> provider (with a key) reports real-provider tokens through the identical code
+> path. The metrics live in the run-response step events (the engine fills them
+> from a per-node `NodeMetrics` sink); persisting them into the durable
+> `step_records` table is a separate, not-yet-done schema change.
 
 > Not run in CI (CI is network-free); `complex_n8n.rs` asserts only that this
 > workflow's IR is statically valid and targets the real endpoints.
