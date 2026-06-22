@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "wf_ticket_triage",
+  "name": "Support ticket triage with severity routing & LLM draft",
+  "nodes": [
+    { "id": "ticket_in", "kind": "webhook_trigger", "params": {} },
+    {
+      "id": "triage",
+      "kind": "switch",
+      "params": {
+        "key": "/severity",
+        "cases": [
+          { "value": "critical", "port": 0 },
+          { "value": "high", "port": 1 },
+          { "value": "normal", "port": 2 }
+        ],
+        "default_port": 3
+      }
+    },
+    { "id": "page", "kind": "transform", "params": { "set": { "action": "page_oncall", "sla_min": 15 } } },
+    { "id": "escalate", "kind": "transform", "params": { "set": { "action": "assign_senior", "sla_min": 60 } } },
+    { "id": "draft", "kind": "llm_call", "params": { "prompt": "Draft a friendly reply to: {{json.subject}}" } },
+    { "id": "autoclose", "kind": "transform", "params": { "set": { "action": "auto_acknowledge" } } },
+    { "id": "dispatch", "kind": "merge", "params": {} }
+  ],
+  "connections": [
+    { "from_node": "ticket_in", "from_port": 0, "to_node": "triage" },
+    { "from_node": "triage", "from_port": 0, "to_node": "page" },
+    { "from_node": "triage", "from_port": 1, "to_node": "escalate" },
+    { "from_node": "triage", "from_port": 2, "to_node": "draft" },
+    { "from_node": "triage", "from_port": 3, "to_node": "autoclose" },
+    { "from_node": "page", "from_port": 0, "to_node": "dispatch" },
+    { "from_node": "escalate", "from_port": 0, "to_node": "dispatch" },
+    { "from_node": "draft", "from_port": 0, "to_node": "dispatch" },
+    { "from_node": "autoclose", "from_port": 0, "to_node": "dispatch" }
+  ]
+}

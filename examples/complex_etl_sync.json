@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "wf_etl_sync",
+  "name": "Scheduled ETL validation sync",
+  "nodes": [
+    { "id": "cron", "kind": "schedule_trigger", "params": { "cron": "*/15 * * * *" } },
+    {
+      "id": "normalize",
+      "kind": "transform",
+      "params": { "set": {
+        "email_norm": "${{ lower($.email) }}",
+        "is_valid": "${{ length($.email) > 5 && contains($.email, '@') }}"
+      } }
+    },
+    { "id": "validate", "kind": "branch", "params": { "condition": { "path": "/is_valid", "op": "truthy" } } },
+    { "id": "load", "kind": "transform", "params": { "set": { "loaded": true, "ready": true } } },
+    { "id": "quarantine", "kind": "transform", "params": { "set": { "quarantined": true, "reason": "invalid_email" } } },
+    { "id": "sink", "kind": "merge", "params": {} }
+  ],
+  "connections": [
+    { "from_node": "cron", "from_port": 0, "to_node": "normalize" },
+    { "from_node": "normalize", "from_port": 0, "to_node": "validate" },
+    { "from_node": "validate", "from_port": 0, "to_node": "load" },
+    { "from_node": "validate", "from_port": 1, "to_node": "quarantine" },
+    { "from_node": "load", "from_port": 0, "to_node": "sink" },
+    { "from_node": "quarantine", "from_port": 0, "to_node": "sink" }
+  ]
+}

@@ -23,6 +23,20 @@ cargo test -p a2w-acceptance --test workflow_gallery -- --nocapture
 | [`http_fetch_shape.json`](./http_fetch_shape.json) | `trigger → http_request → transform` | a side-effecting node, **mocked in dry-run** so verification stays zero-token |
 | [`deep_pipeline.json`](./deep_pipeline.json) | `trigger → t₁ → t₂ → t₃` | a deep staged chain; count-conservation |
 
+## Complex, n8n-style automations
+
+Production-shaped workflows that combine many node kinds the way a real n8n
+automation does — built, run, and asserted by
+[`crates/a2w-acceptance/tests/complex_n8n.rs`](../crates/a2w-acceptance/tests/complex_n8n.rs)
+(`cargo test -p a2w-acceptance --test complex_n8n -- --nocapture`):
+
+| File | Shape | What it automates |
+|---|---|---|
+| [`complex_lead_routing.json`](./complex_lead_routing.json) | `webhook → score → classify → switch → {AE+CRM, nurture, newsletter} → merge` | scores inbound leads (`employees·0.5 + budget/1000 + referral bonus`), tiers them hot/warm/cold, routes each to the right play, and fires a CRM-sync HTTP call for hot leads |
+| [`complex_order_fulfillment.json`](./complex_order_fulfillment.json) | `webhook ⇉ {loop→price, branch→branch→approval→ship} → merge` | prices each line item via a loop, gates on payment, sends high-value orders through a human **approval** before express shipping, auto-ships the rest, holds the unpaid |
+| [`complex_etl_sync.json`](./complex_etl_sync.json) | `schedule → normalize → branch → {load, quarantine} → merge` | a cron ETL that lowercases + validates each record (`length` + `contains`) and splits the batch into load-ready vs quarantined |
+| [`complex_ticket_triage.json`](./complex_ticket_triage.json) | `webhook → switch → {page, escalate, llm draft, autoclose} → merge` | routes support tickets by severity, paging on-call for critical, drafting a reply with an **LLM** node for normal ones, auto-acknowledging the rest |
+
 The gallery test also demonstrates the compounding loop end-to-end:
 
 - **Promote (M4):** a verified workflow is promoted into the skill library on its

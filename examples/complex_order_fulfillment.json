@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "wf_order_fulfillment",
+  "name": "Order fulfillment with line-item loop & high-value approval",
+  "nodes": [
+    { "id": "order_in", "kind": "webhook_trigger", "params": {} },
+    { "id": "lines", "kind": "loop", "params": { "over": "/items" } },
+    { "id": "price_line", "kind": "transform", "params": { "set": { "line_total": "${{ $.value.qty * $.value.unit_price }}" } } },
+    { "id": "payment", "kind": "branch", "params": { "condition": { "path": "/payment_status", "op": "eq", "value": "paid" } } },
+    { "id": "valueflag", "kind": "transform", "params": { "set": { "high_value": "${{ $.total > 1000 }}" } } },
+    { "id": "approve_gate", "kind": "branch", "params": { "condition": { "path": "/high_value", "op": "truthy" } } },
+    { "id": "hold_for_approval", "kind": "approval", "params": { "summary": "approve high-value shipment" } },
+    { "id": "ship_hi", "kind": "transform", "params": { "set": { "status": "shipped", "channel": "express" } } },
+    { "id": "review_hi", "kind": "transform", "params": { "set": { "status": "manual_review" } } },
+    { "id": "ship_lo", "kind": "transform", "params": { "set": { "status": "shipped", "channel": "standard", "auto": true } } },
+    { "id": "hold", "kind": "transform", "params": { "set": { "status": "on_hold", "reason": "awaiting_payment" } } },
+    { "id": "fulfilled", "kind": "merge", "params": {} }
+  ],
+  "connections": [
+    { "from_node": "order_in", "from_port": 0, "to_node": "lines" },
+    { "from_node": "lines", "from_port": 0, "to_node": "price_line" },
+    { "from_node": "order_in", "from_port": 0, "to_node": "payment" },
+    { "from_node": "payment", "from_port": 0, "to_node": "valueflag" },
+    { "from_node": "payment", "from_port": 1, "to_node": "hold" },
+    { "from_node": "valueflag", "from_port": 0, "to_node": "approve_gate" },
+    { "from_node": "approve_gate", "from_port": 0, "to_node": "hold_for_approval" },
+    { "from_node": "approve_gate", "from_port": 1, "to_node": "ship_lo" },
+    { "from_node": "hold_for_approval", "from_port": 0, "to_node": "ship_hi" },
+    { "from_node": "hold_for_approval", "from_port": 1, "to_node": "review_hi" },
+    { "from_node": "ship_hi", "from_port": 0, "to_node": "fulfilled" },
+    { "from_node": "review_hi", "from_port": 0, "to_node": "fulfilled" },
+    { "from_node": "ship_lo", "from_port": 0, "to_node": "fulfilled" },
+    { "from_node": "hold", "from_port": 0, "to_node": "fulfilled" }
+  ]
+}

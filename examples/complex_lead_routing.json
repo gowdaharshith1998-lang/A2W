@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "wf_lead_routing",
+  "name": "Lead enrichment & routing (revenue ops)",
+  "nodes": [
+    { "id": "intake", "kind": "webhook_trigger", "params": {} },
+    {
+      "id": "score",
+      "kind": "transform",
+      "params": { "set": { "lead_score": "${{ $.employees * 0.5 + $.budget / 1000 + if($.source == 'referral', 20, 0) }}" } }
+    },
+    {
+      "id": "classify",
+      "kind": "transform",
+      "params": { "set": { "tier": "${{ if($.lead_score >= 60, 'hot', if($.lead_score >= 30, 'warm', 'cold')) }}" } }
+    },
+    {
+      "id": "route",
+      "kind": "switch",
+      "params": {
+        "key": "/tier",
+        "cases": [
+          { "value": "hot", "port": 0 },
+          { "value": "warm", "port": 1 },
+          { "value": "cold", "port": 2 }
+        ],
+        "default_port": 3
+      }
+    },
+    { "id": "assign_ae", "kind": "transform", "params": { "set": { "action": "assign_to_ae", "priority": "P1", "sla_hours": 1 } } },
+    { "id": "crm_sync", "kind": "http_request", "params": { "method": "POST", "url": "https://crm.example.com/leads" } },
+    { "id": "nurture", "kind": "transform", "params": { "set": { "action": "nurture_sequence", "priority": "P2" } } },
+    { "id": "newsletter", "kind": "transform", "params": { "set": { "action": "newsletter_optin", "priority": "P3" } } },
+    { "id": "review", "kind": "transform", "params": { "set": { "action": "manual_review" } } },
+    { "id": "outbox", "kind": "merge", "params": {} }
+  ],
+  "connections": [
+    { "from_node": "intake", "from_port": 0, "to_node": "score" },
+    { "from_node": "score", "from_port": 0, "to_node": "classify" },
+    { "from_node": "classify", "from_port": 0, "to_node": "route" },
+    { "from_node": "route", "from_port": 0, "to_node": "assign_ae" },
+    { "from_node": "route", "from_port": 1, "to_node": "nurture" },
+    { "from_node": "route", "from_port": 2, "to_node": "newsletter" },
+    { "from_node": "route", "from_port": 3, "to_node": "review" },
+    { "from_node": "assign_ae", "from_port": 0, "to_node": "crm_sync" },
+    { "from_node": "assign_ae", "from_port": 0, "to_node": "outbox" },
+    { "from_node": "nurture", "from_port": 0, "to_node": "outbox" },
+    { "from_node": "newsletter", "from_port": 0, "to_node": "outbox" },
+    { "from_node": "review", "from_port": 0, "to_node": "outbox" }
+  ]
+}
