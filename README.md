@@ -15,7 +15,7 @@ and the system emits <em>calibrated evidence</em> that the outcome is correct, n
 <p>
 <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/gowdaharshith1998-lang/A2W/ci.yml?branch=main&label=CI&style=flat-square" />
 <img alt="crates" src="https://img.shields.io/badge/crates-20-5ac8fa?style=flat-square" />
-<img alt="tests" src="https://img.shields.io/badge/tests-346%20passing-30d158?style=flat-square" />
+<img alt="tests" src="https://img.shields.io/badge/tests-391%20passing-30d158?style=flat-square" />
 <img alt="execution" src="https://img.shields.io/badge/execution-deterministic%20%C2%B7%20zero--token-7d7bff?style=flat-square" />
 <img alt="license" src="https://img.shields.io/badge/license-Proprietary-bf5af2?style=flat-square" />
 </p>
@@ -24,6 +24,8 @@ and the system emits <em>calibrated evidence</em> that the outcome is correct, n
 <a href="https://gowdaharshith1998-lang.github.io/A2W/"><strong>↗ Open the interactive, animated experience</strong></a>
 &nbsp;·&nbsp;
 <a href="#the-loop">The loop</a>
+&nbsp;·&nbsp;
+<a href="#proven--workflows-we-ran-and-verified">Proven</a>
 &nbsp;·&nbsp;
 <a href="#what-verification-means-here">Verification</a>
 &nbsp;·&nbsp;
@@ -75,6 +77,78 @@ flowchart LR
 > every run can be verified and the good ones compound into a reusable, searchable skill library.
 > The fully-animated, clickable version of this diagram lives in the
 > [**interactive site**](https://gowdaharshith1998-lang.github.io/A2W/).
+
+## Proven — workflows we ran and verified
+
+Every workflow below is a **real IR document in [`examples/`](./examples)** that the test suite
+loads, statically validates, runs **deterministically and zero-token**, and checks with a
+calibrated confidence report. The flagship two were driven **live** — over real HTTP, against a
+running `a2w-server` — and independently audited. Nothing here is decorative;
+[`crates/a2w-acceptance`](./crates/a2w-acceptance/tests) is the proof.
+
+### Live production ETL — real network, real writes, zero LLM tokens
+
+[`examples/complex_etl_live.json`](./examples/complex_etl_live.json), driven live against a public
+API and run twice with byte-identical results:
+
+```mermaid
+flowchart LR
+    K([webhook]) --> F["http GET /users<br/>→ 200 · 10 users"]
+    F --> L{{"loop /body"}}
+    L --> N["transform<br/>email_norm · is_valid by TLD"]
+    N --> B{"branch<br/>is_valid?"}
+    B -->|true · 5| LD["http POST /posts<br/>5× → 201 Created"]
+    B -->|false · 5| Q["quarantine<br/>untrusted TLD"]
+    LD --> M(("merge · 10"))
+    Q --> M
+
+    classDef io fill:#0e1120,stroke:#5ac8fa,color:#eaf2ff;
+    classDef gate fill:#0e1120,stroke:#ffd60a,color:#fff6cf;
+    classDef ok fill:#0e1120,stroke:#30d158,color:#ddffe6;
+    class F,LD io; class B gate; class M ok;
+```
+
+| Node | Behavior (real, observed) |
+|---|---|
+| `fetch` | `GET /users` → **HTTP 200**, body = **10 real users** (282 / 491 ms — a genuine outbound call) |
+| `load` | **5 POSTs to `/posts` → every one HTTP 201 Created**, with an echoed `body.id` |
+| `quarantine` | 5 records, `reason: untrusted_email_tld` |
+| run total | **6 external calls · 0 LLM tokens** across all 16 step events |
+
+A **second, independent agent** fetched the same source directly and applied the TLD policy by
+hand — ground truth was **5 load / 5 quarantine, exactly what the workflow produced**. Full record:
+[`docs/LIVE_PRODUCTION_ETL.md`](./docs/LIVE_PRODUCTION_ETL.md).
+
+### Five Claude agents drive the full loop, live over HTTP
+
+Five independent agents each authored a workflow and drove the entire loop — **author → run →
+verify → promote → retrieve → evolve** — against a running server (API-key auth, AES-256-GCM vault,
+SQLite persistence). Production execution was **zero-token**; promotion was gated on a
+**disjoint holdout**:
+
+| Workflow | run (prod) | verify | promote | find | evolve (certified) |
+|---|---|---|---|---|---|
+| `area` · `discount` · `distance` · `invoice` · `payroll` | ✅ zero-token | ✅ `1.00` | ✅ holdout `1.0` | ✅ top match | ✅ `0.0 → 1.0`, gap `0.0` |
+
+**5 / 5 agents passed all 6 steps.** Skills, runs, and step records were then confirmed by reading
+the SQLite file directly, independent of the HTTP API. Full record:
+[`docs/LIVE_MULTIAGENT_DEMO.md`](./docs/LIVE_MULTIAGENT_DEMO.md).
+
+### n8n-style automations — built, run, and asserted
+
+Production-shaped flows that combine many node kinds, verified by
+[`complex_n8n.rs`](./crates/a2w-acceptance/tests/complex_n8n.rs):
+
+| Workflow | Shape |
+|---|---|
+| **Lead routing** | `webhook → score → classify → switch → {AE + CRM, nurture, newsletter, review} → merge` |
+| **Order fulfillment** | `webhook ⇉ {loop → price, branch → branch → approval → ship} → merge` |
+| **Ticket triage** | `webhook → switch → {page, escalate, LLM draft, autoclose} → merge` |
+| **ETL sync** | `schedule → normalize → branch → {load, quarantine} → merge` |
+
+…on top of a seven-workflow [gallery](./examples) exercising every routing primitive (branch,
+switch, loop, merge, deep chains, HTTP shaping) — each one validated, run zero-token, and verified
+by [`workflow_gallery.rs`](./crates/a2w-acceptance/tests/workflow_gallery.rs).
 
 ## What "verification" means here
 
@@ -148,10 +222,10 @@ cargo run -p a2w-mcp
 
 ## Status
 
-20 crates · 346 tests (0 failing) · clippy-clean · cargo-deny-clean · schema v6 · multi-stage Docker
+20 crates · 391 tests (0 failing) · clippy-clean · cargo-deny-clean · schema v7 · multi-stage Docker
 image. CI runs **fmt + clippy (`-D warnings`) + test (`--workspace --locked`) + cargo-audit +
-cargo-deny + docker build & smoke**. All 14 node kinds have tested executors. Test counts are local;
-CI runs the same `--workspace` gate.
+cargo-deny + docker build & smoke** — all six jobs are required (cargo-deny included). All 14 node
+kinds have tested executors. The local gate and the `--workspace --locked` CI gate run the same suite.
 
 **Known limitations** (calibrated): engine-invariant relations assert engine guarantees only —
 outcome correctness depends on the quality of the spec/golden/semantic evidence an author supplies;

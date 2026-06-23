@@ -117,6 +117,14 @@ closed defaults; turn them on consciously.
 | `POST`   | `/workflows/{id}/dry_run`     | API key   | dry-run (side effects mocked) and persist |
 | `POST`   | `/workflows/{id}/run`         | API key   | **real run** — body may carry `{ trigger_input, idempotency_key }` |
 | `GET`    | `/runs/{run_id}`              | API key   | the stored run record (events + status) |
+| `POST`   | `/runs/{run_id}/resume`       | API key   | resume a crashed run from persisted `step_records` (side-effect nodes are not re-fired) |
+| `POST`   | `/verify`                     | API key   | run a verification plan → calibrated confidence report (engine-invariants vs outcome evidence) |
+| `POST`   | `/search`                     | API key   | evolve a seed workflow; ranks on a fitness plan, certifies the winner on a **disjoint holdout** |
+| `GET`    | `/skills`                     | API key   | retrieve persisted skills, ranked by `query` similarity |
+| `POST`   | `/skills`                     | API key   | verify on a holdout plan, then promote iff it clears the threshold |
+| `GET`    | `/approvals`                  | API key   | list pending human-approval requests |
+| `GET`    | `/approvals/{id}`             | API key   | get one approval request |
+| `POST`   | `/approvals/{id}`             | API key   | decide an approval (approve / reject) |
 | `GET`    | `/credentials`                | API key   | list `{id, name, created_at}` — never the secret |
 | `POST`   | `/credentials`                | API key   | upsert `{id, name, secret}` |
 | `DELETE` | `/credentials/{id}`           | API key   | idempotent delete |
@@ -138,10 +146,14 @@ effects.
   via `Engine::with_max_concurrency`). A 1000-branch workflow can't exhaust
   the tokio runtime.
 - **Versioned migrations**: `_a2w_meta.schema_version` tracks the current
-  schema (currently 1). New migrations run forward-only and are idempotent.
-- **Per-step records**: `step_records` table captures every node event with
-  the serialized output. Foundation for resume-from-step (engine support
-  pending).
+  schema (currently **7**). New migrations run forward-only and are idempotent;
+  destructive ones are wrapped in a single transaction, so a mid-migration crash
+  leaves the DB at a clean prior-or-next version — never half-applied.
+- **Per-step records**: `step_records` captures every node event with the
+  serialized output, plus its real `external_calls` count and LLM `tokens` (v7).
+  This is the substrate for **resume-from-step**: `POST /runs/{run_id}/resume`
+  rehydrates per-node outputs so a crashed run continues without re-firing
+  side-effect nodes (a corrupt or schema-drifted record fails closed).
 - **Retry**: nodes honour `retry: { max_attempts, backoff_ms }` from the IR;
   attempts are recorded in the step event stream (`Failed` events with
   `external_calls` carrying the attempt number).
@@ -191,17 +203,24 @@ already factored as the natural extension points.
 
 ## Known limitations
 
-- **Resume-from-step**: the engine does not yet resume a crashed run — the
-  foundation (`step_records` with per-node outputs) is in place, but the
-  engine doesn't read it back on a re-invoke.
+These are the **true, current** limitations — calibrated, not aspirational.
+Items the early roadmap deferred (resume-from-step, all 14 node executors, the
+expression DSL, durable step metrics) have since shipped and are no longer
+listed here; see the engine and `a2w-expr` crates for the implementations.
+
 - **Streaming step events**: events flush at end-of-run only. A hung node
   produces no visibility until it returns (or the run is killed).
-- **Postgres**: schema uses `INSERT OR IGNORE` (SQLite-only); a Postgres
-  port needs portable upserts.
-- **Distributed queue**: no durable queue or webhook/worker split.
-- **Unimplemented node kinds**: `SubWorkflow`, `LlmCall`, `Approval` have
-  no executor — workflows that reference them get a clean
-  `NoExecutorForKind` error at run time.
-- **Expression engine**: `Transform.set` is static; `template.rs` is
-  `{{json}}` substring substitution. A real expression DSL is a future
-  milestone.
+- **Postgres**: the durable store targets SQLite (`INSERT OR IGNORE`, WAL); a
+  Postgres backend needs portable upserts. Single-node SQLite is the supported
+  deployment today.
+- **Distributed queue**: no durable queue or webhook/worker split — one process
+  owns triggering and execution. Horizontal scale is a future milestone.
+- **Multi-tenancy**: ships **single-tenant** (one `A2W_API_KEY` grants full
+  access). The resolvers and per-route handlers are factored as the extension
+  points for an owner-scoped layer (see *Ownership / multi-tenancy* above), but
+  that layer is not bundled.
+- **Outcome verification is only as strong as its evidence**: engine-invariants
+  hold for *any* valid workflow and verify the **engine**, not the **outcome**.
+  Outcome correctness depends on the spec assertions, golden fixtures, and
+  spec-derived semantic relations an author supplies; an evidence-free report is
+  reported as *"engine-verified; outcome UNVERIFIED."*

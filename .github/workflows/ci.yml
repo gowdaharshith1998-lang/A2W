@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, production-hardening]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -58,7 +58,8 @@ jobs:
   deny:
     name: cargo-deny (licenses, advisories, bans)
     runs-on: ubuntu-latest
-    continue-on-error: true # initial run informational; flip to required after policy is settled.
+    # Required gate: deny.toml policy is settled and passes (advisories, bans,
+    # licenses, sources). A regression in the dependency tree fails CI.
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable

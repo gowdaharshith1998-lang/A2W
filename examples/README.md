@@ -32,7 +32,7 @@ automation does — built, run, and asserted by
 
 | File | Shape | What it automates |
 |---|---|---|
-| [`complex_lead_routing.json`](./complex_lead_routing.json) | `webhook → score → classify → switch → {AE+CRM, nurture, newsletter} → merge` | scores inbound leads (`employees·0.5 + budget/1000 + referral bonus`), tiers them hot/warm/cold, routes each to the right play, and fires a CRM-sync HTTP call for hot leads |
+| [`complex_lead_routing.json`](./complex_lead_routing.json) | `webhook → score → classify → switch → {AE+CRM, nurture, newsletter, review} → merge` | scores inbound leads (`employees·0.5 + budget/1000 + referral bonus`), tiers them hot/warm/cold (with a default `review` port for anything unmatched), routes each to the right play, and fires a CRM-sync HTTP call for hot leads |
 | [`complex_order_fulfillment.json`](./complex_order_fulfillment.json) | `webhook ⇉ {loop→price, branch→branch→approval→ship} → merge` | prices each line item via a loop, gates on payment, sends high-value orders through a human **approval** before express shipping, auto-ships the rest, holds the unpaid |
 | [`complex_etl_sync.json`](./complex_etl_sync.json) | `schedule → normalize → branch → {load, quarantine} → merge` | a cron ETL that lowercases + validates each record (`length` + `contains`) and splits the batch into load-ready vs quarantined |
 | [`complex_ticket_triage.json`](./complex_ticket_triage.json) | `webhook → switch → {page, escalate, llm draft, autoclose} → merge` | routes support tickets by severity, paging on-call for critical, drafting a reply with an **LLM** node for normal ones, auto-acknowledging the rest |

@@ -84,8 +84,9 @@ the `llm_call` node also surfaces per item as `input_tokens` / `output_tokens`.
 > `ANTHROPIC_API_KEY` is configured; pointing `A2W_LLM_BASE_URL` at the real
 > provider (with a key) reports real-provider tokens through the identical code
 > path. The metrics live in the run-response step events (the engine fills them
-> from a per-node `NodeMetrics` sink); persisting them into the durable
-> `step_records` table is a separate, not-yet-done schema change.
+> from a per-node `NodeMetrics` sink) and are now **persisted into the durable
+> `step_records` table** — schema v7 adds the `external_calls` and `tokens`
+> columns and a regression test asserts they round-trip.
 
 > Not run in CI (CI is network-free); `complex_n8n.rs` asserts only that this
 > workflow's IR is statically valid and targets the real endpoints.

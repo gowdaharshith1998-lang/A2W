@@ -185,6 +185,15 @@
     font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
   pre .k{color:var(--accent-2)} pre .s{color:var(--accent-3)} pre .c{color:var(--ink-faint)} pre .f{color:var(--accent)}
 
+  /* ---------- proven / live ---------- */
+  .steps{display:flex; gap:8px; flex-wrap:wrap}
+  .step-chip{font-size:11.5px; font-weight:650; padding:6px 12px; border-radius:980px; white-space:nowrap;
+    border:1px solid color-mix(in srgb,var(--accent-3) 38%,var(--panel-bd)); color:var(--accent-3);
+    background:color-mix(in srgb,var(--accent-3) 12%,transparent)}
+  .token.q{fill:var(--gold)}
+  .mini-cap{font-size:12.5px; color:var(--ink-faint); margin-top:14px; text-align:center;
+    font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+
   footer{padding:60px 0 80px; border-top:1px solid var(--panel-bd); margin-top:40px; text-align:center; color:var(--ink-dim)}
   footer a{color:var(--accent); text-decoration:none}
 
@@ -206,6 +215,7 @@
     <a href="#flow">The loop</a>
     <a href="#verify">Verification</a>
     <a href="#search">Search</a>
+    <a href="#proven">Proven</a>
     <a href="#architecture">Architecture</a>
     <button class="toggle" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◑</button>
     <a class="btn primary" href="https://github.com/gowdaharshith1998-lang/A2W">GitHub ↗</a>
@@ -225,10 +235,10 @@
     </div>
     <div class="pills reveal in" style="--d:.24s">
       <span class="pill"><b>20</b> crates</span>
-      <span class="pill"><b>346</b> tests</span>
+      <span class="pill"><b>391</b> tests</span>
       <span class="pill"><b>0</b> tokens / run</span>
       <span class="pill"><b>CI</b> green</span>
-      <span class="pill">schema <b>v6</b></span>
+      <span class="pill">schema <b>v7</b></span>
     </div>
   </div>
 </header>
@@ -355,6 +365,83 @@
   </div>
 </section>
 
+<!-- ===== proven / live ===== -->
+<section id="proven" style="background:var(--bg-2)">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="eyebrow">Proven, not promised</div>
+      <h2>Run live. Audited independently.</h2>
+      <p>The flagship workflows weren’t only unit-tested — they were driven over real HTTP against a running server, then checked by a second agent that never touched A2W.</p>
+    </div>
+
+    <div class="demo reveal" style="--d:.05s">
+      <!-- live ETL diagram -->
+      <div class="panelbox">
+        <h3><svg class="gi" viewBox="0 0 22 22" aria-hidden="true"><path d="M12 2 L5 12 H10 L9 20 L17 9 H12 Z"/></svg> Live production ETL</h3>
+        <svg id="etlSvg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1000 232" role="img" aria-label="Live ETL: fetch 10 users, split 5 load / 5 quarantine, merge 10">
+          <defs>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--ink-faint)"/></marker>
+          </defs>
+          <!-- edges -->
+          <path id="pe1" class="flow-edge" marker-end="url(#arrow2)" d="M104 116 H128"/>
+          <path id="pe2" class="flow-edge" marker-end="url(#arrow2)" d="M244 116 H268"/>
+          <path id="pe3" class="flow-edge" marker-end="url(#arrow2)" d="M360 116 H384"/>
+          <path id="pe4" class="flow-edge" marker-end="url(#arrow2)" d="M512 116 H540"/>
+          <path id="pe5" class="flow-edge" marker-end="url(#arrow2)" d="M636 110 C676 80 680 54 700 54"/>
+          <path id="pe6" class="flow-edge" marker-end="url(#arrow2)" d="M636 122 C676 152 680 178 700 178"/>
+          <path id="pe7" class="flow-edge" marker-end="url(#arrow2)" d="M850 54 C874 72 880 94 884 112"/>
+          <path id="pe8" class="flow-edge" marker-end="url(#arrow2)" d="M850 178 C874 160 880 138 884 120"/>
+          <!-- nodes -->
+          <g class="node" transform="translate(8,93)"><rect width="96" height="46"/><text x="48" y="22" text-anchor="middle" font-size="13">webhook</text><text class="sub" x="48" y="37" text-anchor="middle">trigger</text></g>
+          <g class="node" transform="translate(128,93)"><rect width="116" height="46"/><text x="58" y="22" text-anchor="middle" font-size="13">GET /users</text><text class="sub" x="58" y="37" text-anchor="middle">200 · 10 users</text></g>
+          <g class="node" transform="translate(268,93)"><rect width="92" height="46"/><text x="46" y="22" text-anchor="middle" font-size="13">loop</text><text class="sub" x="46" y="37" text-anchor="middle">/body</text></g>
+          <g class="node" transform="translate(384,93)"><rect width="128" height="46"/><text x="64" y="22" text-anchor="middle" font-size="13">normalize</text><text class="sub" x="64" y="37" text-anchor="middle">TLD policy</text></g>
+          <g class="node" transform="translate(540,93)"><rect width="96" height="46"/><text x="48" y="22" text-anchor="middle" font-size="13">branch</text><text class="sub" x="48" y="37" text-anchor="middle">is_valid</text></g>
+          <g class="node" transform="translate(700,31)"><rect width="150" height="46" stroke="var(--accent-3)"/><text x="75" y="22" text-anchor="middle" font-size="13">POST /posts</text><text class="sub" x="75" y="37" text-anchor="middle">5 × 201 created</text></g>
+          <g class="node" transform="translate(700,155)"><rect width="150" height="46" stroke="var(--gold)"/><text x="75" y="22" text-anchor="middle" font-size="13">quarantine</text><text class="sub" x="75" y="37" text-anchor="middle">5 · bad TLD</text></g>
+          <g class="node" transform="translate(884,93)"><rect width="96" height="46" stroke="var(--accent-3)"/><text x="48" y="22" text-anchor="middle" font-size="13">merge</text><text class="sub" x="48" y="37" text-anchor="middle">10</text></g>
+          <!-- tokens -->
+          <circle class="token" r="4"><animateMotion dur="1.8s" begin="0s" repeatCount="indefinite"><mpath href="#pe1" xlink:href="#pe1"/></animateMotion></circle>
+          <circle class="token" r="4"><animateMotion dur="1.8s" begin=".35s" repeatCount="indefinite"><mpath href="#pe2" xlink:href="#pe2"/></animateMotion></circle>
+          <circle class="token" r="4"><animateMotion dur="1.8s" begin=".7s" repeatCount="indefinite"><mpath href="#pe3" xlink:href="#pe3"/></animateMotion></circle>
+          <circle class="token" r="4"><animateMotion dur="1.8s" begin="1.05s" repeatCount="indefinite"><mpath href="#pe4" xlink:href="#pe4"/></animateMotion></circle>
+          <circle class="token c" r="4"><animateMotion dur="2s" begin="1.3s" repeatCount="indefinite"><mpath href="#pe5" xlink:href="#pe5"/></animateMotion></circle>
+          <circle class="token c" r="4"><animateMotion dur="2s" begin="1.9s" repeatCount="indefinite"><mpath href="#pe7" xlink:href="#pe7"/></animateMotion></circle>
+          <circle class="token q" r="4"><animateMotion dur="2s" begin="1.3s" repeatCount="indefinite"><mpath href="#pe6" xlink:href="#pe6"/></animateMotion></circle>
+          <circle class="token q" r="4"><animateMotion dur="2s" begin="1.9s" repeatCount="indefinite"><mpath href="#pe8" xlink:href="#pe8"/></animateMotion></circle>
+        </svg>
+        <p class="mini-cap">webhook → fetch → loop → normalize → branch → {load · quarantine} → merge</p>
+      </div>
+
+      <!-- observed results -->
+      <div class="panelbox">
+        <h3><svg class="gi" viewBox="0 0 22 22" aria-hidden="true"><path d="M11 2 L19 5 V11 C19 15.5 15.5 18.8 11 20 C6.5 18.8 3 15.5 3 11 V5 Z"/><path d="M7.5 11 L10 13.5 L14.5 8.5"/></svg> Observed — real, run twice</h3>
+        <div class="check"><span class="dot pass">✓</span><span class="lab"><code>GET /users</code> → <b>200</b>, 10 real users <span class="cat">282 / 491 ms</span></span></div>
+        <div class="check"><span class="dot pass">✓</span><span class="lab">5 × <code>POST /posts</code> → <b>201 Created</b> <span class="cat">real write</span></span></div>
+        <div class="check"><span class="dot pass">✓</span><span class="lab">5 quarantined <span class="cat">untrusted TLD</span></span></div>
+        <div class="check"><span class="dot pass">✓</span><span class="lab">6 external calls · <b>0 LLM tokens</b> <span class="cat">16 events</span></span></div>
+        <div class="verdict ok">Independent agent, by hand: <b>5 load / 5 quarantine</b> — exact match.</div>
+      </div>
+    </div>
+
+    <!-- five-agent loop strip -->
+    <div class="stage reveal" style="--d:.1s; margin-top:22px; text-align:center">
+      <div class="eyebrow">Live multi-agent run</div>
+      <h3 style="font-size:22px; margin:10px 0 6px; letter-spacing:-.02em">Five agents · the full loop · over HTTP</h3>
+      <p class="faint" style="max-width:640px; margin:0 auto 20px; font-size:14.5px">Each authored a workflow and drove every stage against a running server with API-key auth and an AES-256-GCM vault. Production runs were zero-token; promotion gated on a disjoint holdout.</p>
+      <div class="steps" style="justify-content:center">
+        <span class="step-chip">✓ author</span>
+        <span class="step-chip">✓ run · zero-token</span>
+        <span class="step-chip">✓ verify · 1.00</span>
+        <span class="step-chip">✓ promote · holdout 1.0</span>
+        <span class="step-chip">✓ find · top match</span>
+        <span class="step-chip">✓ evolve · 0.0→1.0</span>
+      </div>
+      <p class="gap-note" style="margin-top:20px"><b style="color:var(--accent-3)">5 / 5 agents passed all 6 steps</b> — area · discount · distance · invoice · payroll. Skills, runs &amp; step records confirmed by reading the SQLite file directly.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ===== architecture ===== -->
 <section id="architecture" style="background:var(--bg-2)">
   <div class="wrap">
@@ -379,7 +466,7 @@
   <div class="wrap">
     <div class="stats reveal">
       <div class="stat"><div class="n" data-count="20">0</div><div class="l">crates</div></div>
-      <div class="stat"><div class="n" data-count="346">0</div><div class="l">tests, 0 failing</div></div>
+      <div class="stat"><div class="n" data-count="391">0</div><div class="l">tests, 0 failing</div></div>
       <div class="stat"><div class="n" data-count="14">0</div><div class="l">node kinds, all tested</div></div>
       <div class="stat"><div class="n" data-count="0">0</div><div class="l">tokens per run</div></div>
     </div>
